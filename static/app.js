@@ -12,7 +12,7 @@ async function api(path, data) {
 }
 function inverse(lat,lng){ // Invert the forward GCJ transform for map display only.
   const a=6378245,ee=.00669342162296594323,pi=Math.PI;
-  function forward(lat,lng){if(lng<72.004||lng>137.8347||lat<.8293||lat>55.8271)return [lat,lng];const x=lng-105,y=lat-35;
+  function forward(lat,lng){if(!(73.66<lng&&lng<135.05&&3.86<lat&&lat<53.55))return [lat,lng];const x=lng-105,y=lat-35;
     let dlat=-100+2*x+3*y+.2*y*y+.1*x*y+.2*Math.sqrt(Math.abs(x));
     dlat+=(20*Math.sin(6*x*pi)+20*Math.sin(2*x*pi))*2/3+(20*Math.sin(y*pi)+40*Math.sin(y*pi/3))*2/3+(160*Math.sin(y*pi/12)+320*Math.sin(y*pi/30))*2/3;
     let dlng=300+x+2*y+.1*x*x+.1*x*y+.1*Math.sqrt(Math.abs(x));
