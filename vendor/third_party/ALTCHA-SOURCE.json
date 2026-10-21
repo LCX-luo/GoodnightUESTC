@@ -1,0 +1,33 @@
+{
+  "package": "altcha",
+  "version": "3.4.1",
+  "source": "https://registry.npmjs.org/altcha/-/altcha-3.4.1.tgz",
+  "npm_integrity": "sha512-K+5Mm1kvdFb+MWr6zIttXXvpGWXTYKD/SxYgXG3TbeeVjEny9DgqyevcuXui4GLtx0roIqC2KYYhSnp5/Vdzbg==",
+  "license_sha256": "bee1fb9d9c97d42c12c22332c5250f2fb1ef5c2321f6f82beb23e3b77be50a29",
+  "license": "MIT",
+  "files": {
+    "altcha-3.4.1.min.js": {
+      "upstream": "package/dist/external/altcha.min.js",
+      "sha256": "5371b64b33984f7d1865c2f694f38e6c4fe49a7f5485fb647d072bcb655932c0"
+    },
+    "altcha-3.4.1.css": {
+      "upstream": "package/dist/external/altcha.css",
+      "sha256": "03622256effb4e962d0c1da9a59684cf237f541f290703934c07a97dabcbad47"
+    },
+    "altcha-sha-3.4.1.worker.js": {
+      "upstream": "package/dist/workers/sha.js",
+      "sha256": "a7385783758fb251802be93a6d45e8d828b0d60000593c4a58ecc86ba86838ca"
+    },
+    "altcha-zh-cn-3.4.1.js": {
+      "upstream": "package/dist/i18n/zh-cn.js",
+      "sha256": "f3f23c5f3d9a44e8166c5dbfb183ac365d83e6a1a376c9d21d68c9c06de272e6"
+    }
+  },
+  "python": {
+    "version": "2.3.0",
+    "source": "https://pypi.org/project/altcha/2.3.0/",
+    "wheel_sha256": "92d118164866e1e80e3f1f1b1561c49ff4a0e8ae932e8b6cf560a2729c661cd1",
+    "license_file": "ALTCHA-Python.LICENSE",
+    "license_sha256": "acf2b86dd7e2f5810c27d2f1c83a5bb4677d56b95249988586014fb2e818a695"
+  }
+}

@@ -1,0 +1,12 @@
+.venv/
+private-data/
+__pycache__/
+*.log
+*.png
+tests/login-public-reference.html
+tests/login-script-reference.js
+tests/osm-shahe-reference.xml
+build/
+dist/
+.pytest_cache/
+*.zip
