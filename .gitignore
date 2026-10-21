@@ -10,3 +10,8 @@ build/
 dist/
 .pytest_cache/
 *.zip
+android/.gradle/
+android/.kotlin/
+android/local.properties
+*.jks
+*.keystore

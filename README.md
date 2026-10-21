@@ -1,8 +1,10 @@
 # 晚安成电 · 本机签到
 
-一个自托管的 Windows 本地工具：登录本人学校账号，在地图上选择实际位置，确认后向学校签到，再回读学校记录核对结果。
+一个在本机运行的签到工具，提供 Windows 版和独立 Android 手机版：登录本人学校账号，在地图上选择实际位置，确认后向学校签到，再回读学校记录核对结果。
 
-不需要服务器、Docker、Node.js、数据库安装或地图 API Key。密码不落盘，Cookie 在本机加密保存。
+不需要服务器、Docker、Node.js、数据库安装或地图 API Key。Windows 版密码不落盘、Cookie 在本机加密保存；Android 版通过官方网页登录，会话保存在手机应用中。
+
+**手机用户：** [下载 Android 安装包](downloads/GoodnightUESTC-Android.apk) · [Android 完整使用和编译说明](android/README.md)。Android 8.0+，手机独立运行，不需要电脑开机。当前为测试版，先使用“在线检查 / 只读预检查”确认流程。
 
 ## 免责声明
 
