@@ -20,6 +20,29 @@ spec.loader.exec_module(phone)
 
 
 class PhoneProtocol(unittest.TestCase):
+    def test_scan_timeout_then_confirmation_keeps_login_type_in_callback(self):
+        client, exchange, callback = MagicMock(), MagicMock(), MagicMock()
+        callback.cancelled.return_value = False
+        user = {'id': 'own-id', 'username': 'synthetic'}
+        client.school.side_effect = [{'userData': user}, {'bind': True, 'sessionId': 'mini'},
+                                    {'userData': user}, {'ticket': 't' * 43}]
+        client.request.side_effect = [(200, {}, b'<img src="/connect/qrcode/test-uuid">'),
+                                     (200, {}, b'fake-image'), TimeoutError(),
+                                     (200, {}, b'window.wx_errcode=404;'),
+                                     (200, {}, b"window.wx_errcode=405;window.wx_code='fake-code';")]
+        exchange.request.return_value = (302, {}, b'')
+        exchange.cookies = [types.SimpleNamespace(name=k, value=v, domain='yybadaccess.3g.qq.com', path='/')
+                            for k, v in {'openid': 'own', 'accesstoken': 'access', 'refreshtoken': 'refresh'}.items()]
+        with patch.object(phone, 'Client', side_effect=[client, exchange]), \
+                patch.object(phone, 'login_buffer', return_value='buffer'), \
+                patch.object(phone, 'get_code', side_effect=['first', 'second']), patch.object(phone.time, 'sleep'):
+            result = json.loads(phone.acquire('school-session', '', callback, True))
+        query = phone.urllib.parse.parse_qs(phone.urllib.parse.urlsplit(exchange.request.call_args.args[1]).query)
+        self.assertEqual(query['login_type'], ['WX'])
+        self.assertEqual(query['code'], ['fake-code'])
+        self.assertEqual(result['ticket'], 't' * 43)
+        callback.credentials.assert_called_once()
+
     def test_signing_matches_verified_sdk_byte_for_byte(self):
         from moon_uestc._wechat_login import LoginClient
         client = MagicMock()

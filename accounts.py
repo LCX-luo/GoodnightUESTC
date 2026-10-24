@@ -3,6 +3,7 @@ import json
 import re
 import threading
 import uuid
+import time
 from pathlib import Path
 from flask import jsonify, request, send_from_directory
 from werkzeug.wrappers import Response
@@ -24,7 +25,7 @@ def install_accounts(app, store, root, factory):
 
     def summary(profile):
         result = dict(profile, student_id=None, schoolSessionSaved=False, wechatSaved=False,
-                      locationSaved=False, verifiedAt=None, accessExpiresAt=None)
+                      locationSaved=False, verifiedAt=None, accessExpiresAt=None, ready=False)
         path = directory / profile['id']
         if not path.is_dir():
             return result
@@ -39,6 +40,8 @@ def install_accounts(app, store, root, factory):
             if saved and value.get('student_id') == saved['student_id']:
                 result.update(wechatSaved=True, verifiedAt=value.get('last_verified_at'),
                               accessExpiresAt=value.get('credentials', {}).get('expires_at'))
+        result['ready'] = bool(result['schoolSessionSaved'] and result['wechatSaved'] and
+                               result['locationSaved'] and profile.get('saved', True))
         return result
 
     @app.get('/accounts')
@@ -60,12 +63,39 @@ def install_accounts(app, store, root, factory):
             profiles = read()
             if len(profiles) >= 20:
                 return jsonify(error='本机最多保存 20 个授权配置。'), 400
-            profile = {'id': uuid.uuid4().hex, 'name': title.strip()}
+            profile = {'id': uuid.uuid4().hex, 'name': title.strip(), 'saved': False}
             profiles.append(profile)
             temp = directory / 'index.new'
             temp.write_text(json.dumps(profiles, ensure_ascii=False), encoding='utf-8')
             temp.replace(index)
             return jsonify(profile=profile), 201
+
+    @app.post('/api/accounts/<profile>/save')
+    def profile_save(profile):
+        value = request.get_json(silent=True)
+        name = value.get('name', '') if isinstance(value, dict) else ''
+        if not isinstance(name, str) or not name.strip() or len(name) > 80:
+            return jsonify(error='请输入不超过 80 字的账号备注。'), 400
+        with lock:
+            profiles = read()
+            target = next((p for p in profiles if p['id'] == profile), None)
+            if not target:
+                return jsonify(error='账号草稿不存在。'), 404
+            child = children.get(profile)
+            if child:
+                login = child.extensions['browser_login']
+                if child.extensions['wechat_authorization'].status()['active'] or (login.thread and login.thread.is_alive()):
+                    return jsonify(error='请先完成当前学校登录或微信授权。'), 409
+            record = summary(target)
+            if not all(record[k] for k in ('schoolSessionSaved', 'wechatSaved', 'locationSaved')):
+                return jsonify(error='请先完成学校登录、微信授权和位置保存，再添加到账号库。'), 400
+            if target.get('saved') is False and not record.get('verifiedAt'):
+                return jsonify(error='请先完成账号一致性核对和成功取票，再保存新账号。'), 400
+            target.update(name=name.strip(), saved=True, updated_at=time.time())
+            temp = directory / 'index.new'
+            temp.write_text(json.dumps(profiles, ensure_ascii=False), encoding='utf-8')
+            temp.replace(index)
+            return jsonify(profile=summary(target), ok=True)
 
     @app.post('/api/accounts/import-current')
     def import_current_account():

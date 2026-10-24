@@ -94,13 +94,12 @@ public class WeChatAuth {
             if(reason.contains("school_http_401")||reason.contains("school_http_403")) throw new IOException("学校会话失效，请重新登录学校账号");
             java.util.regex.Matcher code=java.util.regex.Pattern.compile("school_code_(\\d+)").matcher(reason);
             if(code.find()) throw new IOException("学校授权失败（代码 "+code.group(1)+"），没有提交签到");
+            if(reason.contains("oauth_credentials_missing")) throw new IOException("微信已确认，但应用宝回调未返回凭据，请重新授权；未提交签到");
+            if(reason.contains("qr_network_failed")) throw new IOException("二维码状态查询网络失败，请检查连接后重试；未提交签到");
             throw new IOException("微信授权未完成，请检查网络或重新扫码；没有提交签到");
         }
     }
     String forSubmission(String session) throws Exception {
-        synchronized(this) {
-            if(ticket!=null&&android.os.SystemClock.elapsedRealtime()-ticketAt<240000&&binding(session).equals(sessionBinding)) return ticket;
-        }
         return acquire(session,false);
     }
     public static class Callback {

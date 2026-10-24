@@ -178,7 +178,7 @@ def create_app(data_dir=None, *, profiles_enabled=True):
             if not snapshot:
                 return jsonify(error='请先登录本人学校账号。'), 400
             with operation.operation('prepare'):
-                preview = prepare_checkin(snapshot, point, progress=operation.step)
+                preview = prepare_checkin(snapshot, point, manual=True, progress=operation.step)
             token = secrets.token_urlsafe(32)
             with pending_lock:
                 for key in list(pending):
@@ -219,7 +219,7 @@ def create_app(data_dir=None, *, profiles_enabled=True):
             with operation.operation('checkin'):
                 operation.step('正在检查本次微信操作授权…')
                 snapshot = wechat.for_submission(snapshot)
-                result = submit_checkin(snapshot, point, attempts, address=ticket.get('address'), progress=operation.step)
+                result = submit_checkin(snapshot, point, attempts, manual=True, address=ticket.get('address'), progress=operation.step)
                 if result.get('submitted'):
                     wechat.consume_local_ticket()
             return jsonify(ok=True, result=result)

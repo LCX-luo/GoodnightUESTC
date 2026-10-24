@@ -84,7 +84,11 @@ class SchoolClient {
             try { envelope=new JSONObject(body); } catch(JSONException ex) { throw new IOException("未收到学校 JSON 数据，请重新登录"); }
             if(!envelope.has("code") || envelope.optInt("code",-1)!=0 || Boolean.FALSE.equals(envelope.opt("ok"))) {
                 // Do not echo upstream messages, which can contain account/session information.
-                throw new IOException("学校未接受请求（代码 "+envelope.optInt("code",-1)+"），请检查登录或使用官方入口");
+                String message=envelope.optString("msg",envelope.optString("message",""));
+                // Show only bounded text, with credential-like long strings removed.
+                message=message.replaceAll("[A-Za-z0-9_./=+?-]{24,}","[已隐藏]").replaceAll("[\\r\\n]"," ");
+                if(message.length()>240) message=message.substring(0,240);
+                throw new IOException("学校返回代码 "+envelope.optInt("code",-1)+"："+message);
             }
             if(post) return envelope.opt("data");
             if(envelope.isNull("data")) throw new IOException("学校返回空数据");
@@ -121,7 +125,7 @@ class SchoolClient {
         } finally { direct.cancel(true); proxied.cancel(true); }
     }
     synchronized void post(JSONObject payload) throws Exception {
-        if(route==null) throw new IOException("请先运行在线检查以确定网络连接");
+        if(route==null) route=systemProxy();
         try { request(POST,payload,route); } finally { operationTicket=null; } // Never retry.
     }
     JSONObject today() throws Exception {

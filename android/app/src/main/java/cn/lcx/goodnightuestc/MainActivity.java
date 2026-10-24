@@ -115,10 +115,9 @@ public class MainActivity extends Activity {
                 JSONObject location=new JSONObject().put("lat",lat).put("lng",lng).put("system","gcj02");
                 if(!state.edit().putString("point",location.toString()).commit()) throw new IOException("位置无法保存");
                 String day=SchoolClient.day();
-                String address=precheck(point);
+                String address=confirm?"所选实际位置":precheck(point);
                 if(!day.equals(SchoolClient.day())) throw new IOException("日期已变化，请重新检查");
                 if(!confirm) { emit("result","只读预检查通过 · "+day+"\n"+address+"\nGCJ-02 "+point[0]+", "+point[1]+"\n没有提交签到。"); return; }
-                if(state.contains("attempt:"+day)) throw new IOException("本机今天已有提交尝试，请通过在线检查或学校官方入口核对，不会重复提交");
                 long prepared=SystemClock.elapsedRealtime();
                 main.post(()->showConfirmation(point,address,day,prepared));
             });
@@ -164,46 +163,26 @@ public class MainActivity extends Activity {
     }
     private void submit(double[] point,String address,String day,long prepared) throws Exception {
         if(!day.equals(SchoolClient.day())||SystemClock.elapsedRealtime()-prepared>120000) throw new IOException("确认已过期，请重新预检查");
-        // Recheck the position, time and record immediately before the one-shot POST.
-        progress("正在复核位置、时段和当天记录…");
-        SchoolClient.fence(point,(JSONArray)school.get(SchoolClient.FENCES));
-        JSONObject schedule=(JSONObject)school.get(SchoolClient.SCHEDULE);
-        SchoolClient.window(schedule);
-        if(!"PENDING".equals(SchoolClient.validate(school.today()))) throw new IOException("当天已有记录，已停止提交");
-        if(!day.equals(SchoolClient.day())||SystemClock.elapsedRealtime()-prepared>120000) throw new IOException("确认已过期，请重新预检查");
-        SchoolClient.window(schedule);
-        if(state.contains("attempt:"+day)) throw new IOException("本机今天已有提交尝试，请到学校核对");
         progress("正在核对并获取本次微信操作授权…");
         String beforeSession=school.session();
         String operationTicket=wechat.forSubmission(beforeSession);
         if(!beforeSession.equals(school.session())) throw new IOException("学校账号发生变化，请重新预检查");
         if(!day.equals(SchoolClient.day())||SystemClock.elapsedRealtime()-prepared>120000) throw new IOException("确认已过期，请重新预检查");
-        SchoolClient.window(schedule);
-        if(!"PENDING".equals(SchoolClient.validate(school.today()))) throw new IOException("当天已有记录，已停止提交");
         JSONObject payload=new JSONObject().put("latitude",point[0]).put("longitude",point[1]).put("reverseGeocode",address)
             .put("coordinateSystemCode","gcj02").put("accuracy",0).put("locationDurationMs",0).put("networkTypeCode","unknown")
             .put("locationEnabled",false).put("locationAuthorized","").put("locationAccuracy","").put("errorMessage","")
             .put("clientTime",SchoolClient.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")))
             .put("userAgent",WebSettings.getDefaultUserAgent(this));
-        // Synchronous durable claim survives process death; intentionally conservative across accounts.
-        if(!state.edit().putString("attempt:"+day,"started").commit()) throw new IOException("无法保存提交标记，已停止");
         progress("正在提交一次签到请求…");
         String rejection="";
         try { school.setOperationTicket(operationTicket);school.post(payload); }
         catch(Exception ex) { rejection=ex instanceof IOException?ex.getMessage():""; }
         finally { wechat.consume(); }
-        for(int i=0;i<3;i++) {
-            progress("正在回读学校记录（"+(i+1)+"/3）…");
-            try {
-                if(SchoolClient.confirmed(school.today())) {
-                    state.edit().putString("attempt:"+day,"confirmed").commit(); emit("result","签到已确认：学校当天记录为正常 CHECKED_IN。"); return;
-                }
-            } catch(Exception ignored) { }
-            if(i<2) Thread.sleep(2000);
-        }
-        state.edit().putString("attempt:"+day,"uncertain").commit();
-        emit("result","结果尚未确认。请求不会自动重发，请稍后在线检查或进入学校官方入口核对。"+(rejection==null?"":"\n"+rejection));
+        String recordStatus="查询失败";
+        try { recordStatus=school.today().optString("recordStatusCode"); } catch(Exception ignored) { }
+        emit("result","本次发送一次签到请求。\n"+(rejection.isEmpty()?"学校接受请求（代码 0）":rejection)+"\n当天记录："+recordStatus+"。已有记录不代表本次票据有效；不自动重发。");
     }
+
     @Override protected void onActivityResult(int request,int result,Intent data) {
         super.onActivityResult(request,result,data);
         if(request==1 && result==RESULT_OK) new Bridge().check();

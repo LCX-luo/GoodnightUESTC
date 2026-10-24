@@ -191,14 +191,13 @@ class WeChatAuthorization:
                     self.process = None
 
     def for_submission(self, snapshot):
-        # Keep old/manual imports compatible. Once native authorization has been
-        # configured, obtain a fresh ticket when the short local cache expires.
+        # Legacy imported tickets remain compatible; native credentials get a new
+        # one-use ticket for each explicit final confirmation.
         if self.cached(snapshot):
-            if snapshot.get('operation_ticket_expires_at', 0) <= time.time() + 30:
-                with self.lock:
-                    self.cancelled = False
-                    self.state = {'state': 'working', 'message': '正在获取本次签到授权…'}
-                return self.execute(snapshot, allow_qr=False)
+            with self.lock:
+                self.cancelled = False
+                self.state = {'state': 'working', 'message': '正在获取本次签到授权…'}
+            return self.execute(snapshot, allow_qr=False)
         return snapshot
 
     def consume_local_ticket(self):

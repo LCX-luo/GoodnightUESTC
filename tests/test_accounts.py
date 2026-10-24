@@ -82,6 +82,24 @@ class AccountIsolation(unittest.TestCase):
         self.assertEqual(target.vault.open((target.directory/'wechat.enc').read_bytes(),'wechat-authorization'),value)
         self.assertTrue(self.post('/api/accounts/import-current',{}).json['existing'])
 
+    def test_draft_requires_complete_credentials_and_explicit_save(self):
+        a, token = self.profile('草稿')
+        self.assertFalse(self.client.get('/api/accounts',base_url=BASE).json['profiles'][0]['ready'])
+        self.assertEqual(self.post('/api/accounts/'+a+'/save',{'name':'正式账号'}).status_code,400)
+        local=self.app.extensions['account_children'][a].extensions['local_store']
+        local.save_session({'student_id':'202300000001','saved_at':123,'user_agent':'Synthetic','cookies':[]})
+        value={'student_id':'202300000001','credentials':{'access_token':'synthetic'}}
+        (local.directory/'wechat.enc').write_bytes(local.vault.seal(value,'wechat-authorization'))
+        local.save_location({'name':'本人位置','latitude':30.67,'longitude':104.09,'coordinate_system':'gcj02'})
+        self.assertFalse(self.client.get('/api/accounts',base_url=BASE).json['profiles'][0]['ready'])
+        self.assertEqual(self.post('/api/accounts/'+a+'/save',{'name':'正式账号'}).status_code,400)
+        value['last_verified_at']=123
+        (local.directory/'wechat.enc').write_bytes(local.vault.seal(value,'wechat-authorization'))
+        response=self.post('/api/accounts/'+a+'/save',{'name':'正式账号'})
+        self.assertEqual(response.status_code,200)
+        self.assertTrue(response.json['profile']['ready'])
+        self.assertEqual(response.json['profile']['name'],'正式账号')
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -76,22 +76,29 @@ def configured_payload(snapshot, location):
                              'errorMessage': ''}}}, now())
 
 
-def prepare_checkin(snapshot, location, *, progress=lambda message: None):
+def prepare_checkin(snapshot, location, *, manual=False, progress=lambda message: None):
     if not location:
         raise ToolError('location_required')
+    if manual:
+        payload = configured_payload(snapshot, location)
+        return {'businessDate': now().date().isoformat(), 'name': location['name'],
+                'latitude': payload['latitude'], 'longitude': payload['longitude'],
+                'address': location['name'], 'window': {'start': '由学校判断', 'end': '由学校判断'},
+                'submitted': False}
     school = school_for(snapshot)
     progress('正在读取学校当天记录…')
     record = read_today(school)
     instant = now()
     status = valid_today(record, instant)
-    if status in TERMINAL:
+    if status in TERMINAL and not manual:
         raise ToolError('already_recorded')
     payload = configured_payload(snapshot, location)
     progress('正在检查所选位置的允许范围…')
-    check_fence(payload, school.locations())
+    if not manual:
+        check_fence(payload, school.locations())
     progress('正在检查学校允许的签到时段…')
     schedule = window(school.schedule(), now())
-    if not schedule['open']:
+    if not schedule['open'] and not manual:
         raise ToolError('outside_checkin_window')
     progress('正在查询所选位置的地址…')
     address = school.reverse_geocode(payload['latitude'], payload['longitude'])
@@ -100,8 +107,10 @@ def prepare_checkin(snapshot, location, *, progress=lambda message: None):
             'address': address, 'window': schedule, 'submitted': False}
 
 
-def submit_checkin(snapshot, location, attempts, *, sleep=time.sleep, address=None, progress=lambda message: None):
+def submit_checkin(snapshot, location, attempts, *, manual=False, sleep=time.sleep, address=None, progress=lambda message: None):
     """Caller must validate explicit, session-bound, short-lived confirmation first."""
+    if manual:
+        return submit_manual(snapshot, location, address=address, progress=progress)
     school = school_for(snapshot, writable=True)
     day = now().date().isoformat()
     key = hashlib.sha256(snapshot['student_id'].encode()).hexdigest()
@@ -179,4 +188,43 @@ def submit_checkin(snapshot, location, attempts, *, sleep=time.sleep, address=No
     except sqlite3.Error:
         # Claim was already committed before POST; preserve the result, never resend.
         pass
+    return result
+
+
+def submit_manual(snapshot, location, *, address=None, progress=lambda message: None):
+    """One POST per consumed UI confirmation; query status never suppresses it."""
+    school = school_for(snapshot, writable=True)
+    payload = configured_payload(snapshot, location)
+    payload['reverseGeocode'] = address or location.get('name', '手动选点')
+    result = {'mode': 'checkin', 'submitted': True, 'confirmed': False,
+              'result': 'unknown', 'businessDate': now().date().isoformat(), 'recordStatus': 'UNKNOWN'}
+    try:
+        progress('正在发送本次签到请求（仅一次，不自动重发）…')
+        school.transport.permit = True
+        school.submit(payload)
+        result.update(response='accepted', apiCode=0)
+    except ToolError as error:
+        rejected = error.reason in ('business_error', 'operation_ticket_rejected', 'operation_ticket_pending')
+        result.update(response='rejected' if rejected else 'unknown', reason=error.reason)
+        if error.api_code is not None:
+            result['apiCode'] = error.api_code
+    except Exception:
+        result.update(response='unknown', reason='submission_response_unknown')
+    finally:
+        school.transport.permit = False
+    metadata = getattr(school, 'submission_response', None)
+    if isinstance(metadata, dict):
+        result.update(metadata)
+    try:
+        progress('正在查询提交后的学校记录…')
+        record = school.today()
+        result['recordStatus'] = valid_today(record, now())
+        result['recordConfirmed'] = verified(record, now())
+    except Exception:
+        result['readbackFailed'] = True
+    if result.get('response') == 'accepted':
+        result['confirmed'] = result.get('recordConfirmed', False)
+        result['result'] = 'confirmed' if result['confirmed'] else 'accepted_pending'
+    elif result.get('response') == 'rejected':
+        result['result'] = 'rejected'
     return result

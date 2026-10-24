@@ -100,6 +100,33 @@ class SubmissionTests(unittest.TestCase):
             claimed = list(pool.map(lambda _: self.attempts.claim('synthetic-hash', DAY), range(4)))
         self.assertEqual(sum(claimed), 1)
 
+    def test_manual_confirmation_never_queries_or_blocks_on_record_or_window(self):
+        preview = prepare_checkin(SNAPSHOT, POINT, manual=True)
+        self.assertFalse(preview['submitted'])
+        self.school.today.assert_not_called()
+        self.school.schedule.assert_not_called()
+
+    def test_manual_post_rejection_is_not_hidden_by_existing_record(self):
+        self.school.today.return_value = record('CHECKED_IN')
+        self.school.submit.side_effect = ToolError('operation_ticket_rejected', 'checkin_post', api_code=46002)
+        self.school.submission_response = {'httpStatus': 200, 'apiCode': 46002, 'schoolMessage': '授权已过期'}
+        result = submit_checkin(SNAPSHOT, POINT, self.attempts, manual=True, address='确认地址')
+        self.assertTrue(result['submitted'])
+        self.assertEqual(result['apiCode'], 46002)
+        self.assertEqual(result['result'], 'rejected')
+        self.assertFalse(result['confirmed'])
+        self.assertTrue(result['recordConfirmed'])
+        self.school.submit.assert_called_once()
+        self.school.schedule.assert_not_called()
+        self.school.locations.assert_not_called()
+
+    def test_new_manual_click_can_submit_after_timeout_without_automatic_retry(self):
+        self.school.submit.side_effect = ToolError('timeout', 'checkin_post')
+        for expected in (1, 2):
+            result = submit_checkin(SNAPSHOT, POINT, self.attempts, manual=True)
+            self.assertEqual(result['response'], 'unknown')
+            self.assertEqual(self.school.submit.call_count, expected)
+
 
 class TransportTests(unittest.TestCase):
     def test_post_is_exact_one_shot_capability(self):

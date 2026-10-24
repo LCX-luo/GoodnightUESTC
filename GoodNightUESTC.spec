@@ -7,6 +7,7 @@ pw_data, pw_binaries, pw_imports = collect_all('playwright')
 a = Analysis([str(project/'app.py')], pathex=[str(project), str(project/'vendor')],
              binaries=pw_binaries,
              datas=[(str(project/'static'), 'static'),
+                    (str(project/'wechat_worker.py'), '.'),
                     (str(project/'README.md'), 'licenses'),
                     (str(project/'LICENSE'), 'licenses'),
                     (str(project/'vendor/THIRD_PARTY_NOTICES.md'), 'licenses'),

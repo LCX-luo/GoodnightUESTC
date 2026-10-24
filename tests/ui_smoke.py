@@ -84,7 +84,7 @@ def main():
             def slow_submit(*args, **kwargs):
                 kwargs['progress']('正在核对学校记录…')
                 time.sleep(1.2)
-                return {'mode': 'checkin', 'result': 'confirmed', 'confirmed': True, 'submitted': True}
+                return {'mode': 'checkin', 'result': 'confirmed', 'confirmed': True, 'submitted': True, 'recordStatus': 'CHECKED_IN', 'apiCode': 0}
             with patch('app.prepare_checkin', side_effect=slow_prepare), patch('app.submit_checkin', side_effect=slow_submit) as submit:
                 page.locator('#prepare-checkin').click()
                 expect(page.locator('#prepare-checkin')).to_contain_text('正在')
@@ -93,7 +93,7 @@ def main():
                 page.locator('#confirm-location').check()
                 page.locator('#submit-checkin').click()
                 expect(page.locator('#checkin-progress')).to_be_visible()
-                page.locator('#checkin-state').filter(has_text='签到已确认').wait_for()
+                page.locator('#checkin-state').filter(has_text='学校接受且记录已确认').wait_for()
                 submit.assert_called_once()
             # Screenshot an unsubmitted UI, not the synthetic success result.
             page.reload(wait_until='networkidle')

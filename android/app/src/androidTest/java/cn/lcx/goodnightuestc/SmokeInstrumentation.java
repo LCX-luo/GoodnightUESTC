@@ -93,15 +93,15 @@ public class SmokeInstrumentation extends Instrumentation {
             check(address.contains("模拟"),"readonly address"); check(f.posts==0,"readonly never POST"); check(f.reads==4,"four readonly endpoints");
             Method submit=MainActivity.class.getDeclaredMethod("submit",double[].class,String.class,String.class,long.class); submit.setAccessible(true);
             submit.invoke(a,c,address,SchoolClient.day(),SystemClock.elapsedRealtime());
-            check(f.posts==1,"one explicit POST"); check("confirmed".equals(prefs.getString("attempt:"+SchoolClient.day(),"")),"readback confirmed");
+            check(f.posts==1,"one explicit POST"); check(!prefs.contains("attempt:"+SchoolClient.day()),"manual confirmation has no daily suppression");
             check(Math.abs(f.payload.getDouble("latitude")-c[0])<1e-12,"no double conversion");
             check("gcj02".equals(f.payload.getString("coordinateSystemCode")),"coordinate system");
             check(!f.payload.getBoolean("locationEnabled"),"no fabricated sensor claim");
-            try { submit.invoke(a,c,address,SchoolClient.day(),SystemClock.elapsedRealtime()); } catch(InvocationTargetException expected) { check(expected.getCause() instanceof IOException,"duplicate rejected"); }
-            check(f.posts==1,"no duplicate POST");
+            submit.invoke(a,c,address,SchoolClient.day(),SystemClock.elapsedRealtime());
+            check(f.posts==2,"new explicit confirmation sends one new POST despite existing record");
             prefs.edit().clear().commit(); f.uncertain=true; f.posts=0;
             submit.invoke(a,c,address,SchoolClient.day(),SystemClock.elapsedRealtime());
-            check(f.posts==1,"timeout never retries POST"); check("uncertain".equals(prefs.getString("attempt:"+SchoolClient.day(),"")),"uncertain persisted");
+            check(f.posts==1,"timeout never retries POST"); check(!prefs.contains("attempt:"+SchoolClient.day()),"no automatic retry queued");
             prefs.edit().clear().commit();
             result.putString("stream","PASS: "+assertions+" assertions; all school APIs mocked; no real attendance submitted.\n");
             finish(Activity.RESULT_OK,result);

@@ -52,7 +52,7 @@ async function refresh(){
   if(!refresh.initialized){fillLocation(r.location,false);refresh.initialized=true;}
   $('prepare-checkin').disabled=!r.account||!savedLocation||active||submitting||Boolean(wx&&wx.active);
   const op=r.operation;const working=op&&op.active;
-  $('prepare-checkin').textContent=working&&op.kind==='prepare'?`正在预检查… ${Math.floor(op.elapsed)} 秒`:'预检查并确认签到 →';
+  $('prepare-checkin').textContent=working&&op.kind==='prepare'?`正在预检查… ${Math.floor(op.elapsed)} 秒`:'签到 →';
   if(working){const message=op.message+`（已用 ${Math.floor(op.elapsed)} 秒）`;
     if(op.kind==='prepare'||op.kind==='checkin')$('checkin-message').textContent=message;
     if(op.kind==='online')$('online').textContent=message;
@@ -76,6 +76,7 @@ $('forget').addEventListener('click',async()=>{try{await api('/api/session/forge
 for(const action of ['start','cancel','forget'])$('wechat-'+action).addEventListener('click',async()=>{try{await api('/api/wechat/'+action,{});await refresh();}catch(e){toast(e.message);}});
 $('location-form').addEventListener('submit',async e=>{e.preventDefault();try{const r=await api('/api/location',currentLocation());fillLocation(r.location);toast('位置已保存在本机。');}catch(e){toast(e.message);}});
 for(const id of ['latitude','longitude','coordinate-system'])$(id).addEventListener('change',()=>{if($('latitude').value&&$('longitude').value){const loc=currentLocation();if(Number.isFinite(loc.latitude)&&Number.isFinite(loc.longitude)&&Math.abs(loc.latitude)<=90&&Math.abs(loc.longitude)<=180){showPoint(loc.latitude,loc.longitude,loc.coordinate_system,true);$('converted').textContent='位置已修改，请保存后运行检查。';}}});
+$('query-checkin').addEventListener('click',()=>runTest('online'));
 $('offline').addEventListener('click',()=>runTest('offline'));$('online').addEventListener('click',()=>runTest('online'));
 $('prepare-checkin').addEventListener('click',async()=>{
   if(dirtyLocation()){toast('请先保存当前实际位置。');return;}
@@ -94,9 +95,10 @@ $('submit-checkin').addEventListener('click',async()=>{
   $('submit-checkin').textContent='正在复核并提交…';liveProgress.hidden=false;liveProgress.textContent='正在做提交前检查，请勿重复点击。';
   const ticket=confirmation;confirmation='';
   try{const r=await api('/api/checkin',{confirmation:ticket,confirm:true,actual_location_confirmed:true});const result=r.result;
-    const labels={confirmed:'签到已确认',already_recorded:'学校已有当天记录',prior_attempt:'当天已有提交尝试，仅复查',unknown:'提交结果待核对',rejected:'学校拒绝提交',record_changed:'当天记录发生变化'};
+    const labels={confirmed:'学校接受且记录已确认',accepted_pending:'学校已接受，记录待确认',unknown:'响应不明，请查询',rejected:'学校拒绝本次请求'};
     $('checkin-state').textContent=labels[result.result]||'请核对学校记录';
-    $('checkin-message').textContent=result.confirmed?'已回读学校当天记录，确认签到成功。':result.result==='already_recorded'?'没有再次提交，学校当天已经有签到、报告或豁免记录。':result.result==='prior_attempt'?'没有重复提交，请运行在线只读检查核对学校记录。':result.result==='rejected'?`学校未接受本次请求${result.apiCode!==undefined?'（业务码 '+result.apiCode+'）':''}，请核对学校记录。`:'本工具不会自动重发，请运行在线只读检查并核对学校记录。';
+    const code=result.apiCode!==undefined?'业务码 '+result.apiCode+'。':'';
+    $('checkin-message').textContent=`本次已发送一次签到请求。${code}${result.schoolMessage||''} 当天记录：${result.recordStatus}。`+(result.response==='unknown'?'响应不明，不自动重发，请先查询。':'当天已有记录不代表本次票据通过校验。');
     $('checkin-dialog').close();toast(labels[result.result]||'请核对学校记录');
   }catch(e){$('checkin-error').textContent=e.message+' 请关闭弹窗后重新检查；不要连续重试。';$('checkin-error').hidden=false;}
   finally{submitting=false;$('close-confirmation').disabled=false;$('confirm-location').disabled=false;refresh().catch(()=>{});}

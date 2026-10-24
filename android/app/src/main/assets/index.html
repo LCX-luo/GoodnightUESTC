@@ -5,13 +5,13 @@
 <header><span class="tag">ANDROID · 本机运行</span><h1>晚安成电</h1><p>登录本人账号，选择实际位置，核对后签到。</p></header>
 <section><h2>学校账号</h2><p>通过学校官方页面登录。验证码和二次验证由本人完成，会话保存在此手机。</p>
 <div class="actions"><button id="login">学校账号登录</button><button id="check" class="secondary">在线检查</button><button id="logout" class="text">清除会话</button></div></section>
-<section><h2>微信操作授权</h2><p>学校登录后，显示二维码并截图；打开微信“扫一扫 → 相册”识别，核对后确认授权，再返回本应用。首次需要扫码，授权失效时重新扫码。</p><p class="muted">使用第三方协议，不需要 Root，不保证没有账号风控。授权和取票本身不会提交签到。</p><div class="actions"><button id="wechat">显示二维码 / 验证授权</button><button id="wechat-forget" class="text">清除微信授权</button></div><div id="qr-panel" hidden><img id="qr" width="240" height="240" alt="微信授权二维码"><p>二维码约几分钟有效，请尽快截图并在本人微信授权。若微信不允许相册识别，可用另一台设备展示后扫描。</p></div><button id="wechat-cancel" class="text" hidden>取消本次授权</button><p id="wxstatus" class="muted">尚未检查微信授权。</p></section>
+<section><h2>微信操作授权</h2><p>学校登录后，用另一台设备展示此二维码，再用绑定账号的本人微信摄像头扫码并确认授权。首次需要扫码，授权失效时重新扫码。</p><p class="muted">使用第三方协议，不需要 Root，不保证没有账号风控。授权和取票本身不会提交签到。</p><div class="actions"><button id="wechat">显示二维码 / 验证授权</button><button id="wechat-forget" class="text">清除微信授权</button></div><div id="qr-panel" hidden><img id="qr" width="240" height="240" alt="微信授权二维码"><p>二维码约几分钟有效，需摄像头扫码。可将此屏幕展示在另一台设备上再扫描。</p></div><button id="wechat-cancel" class="text" hidden>取消本次授权</button><p id="wxstatus" class="muted">尚未检查微信授权。</p></section>
 <section><div class="maphead"><h2>实际位置</h2><div><button class="text" id="shahe">沙河</button><button class="text" id="qingshuihe">清水河</button></div></div>
 <p>点击地图选择本人实际位置。双指缩放、单指拖动；查看校区不会更改已选位置。</p>
 <div id="map" aria-label="地图"></div>
 <div class="coords"><label>纬度（GCJ-02）<input id="lat" type="number" step="any" value="30.672809764"></label><label>经度（GCJ-02）<input id="lng" type="number" step="any" value="104.100042314"></label></div>
 <p class="muted" id="map-status">国内高德底图 · GCJ-02，选点直接用于学校接口，不重复转换。请核对学校返回的地址。</p>
-<div class="actions"><button id="dry" class="secondary">只读预检查</button><button id="prepare">预检查并签到</button></div></section>
+<div class="actions"><button id="dry" class="secondary">查询</button><button id="prepare">签到</button></div></section>
 <section class="status"><h2>操作状态</h2><p id="message" role="status">尚未检查登录。只读预检查不会提交签到。</p><p id="timer" class="muted"></p></section>
 <footer><strong>免责声明</strong><p>仅限本人账号及学校允许的用途。必须按实际位置签到，不得代签、伪造位置、批量操作他人账号或绕过学校验证。最终确认会提交真实记录，结果以学校系统为准。本工具不保证可用或签到成功，请勿共享会话。</p>
 <p>首次测试请先用“在线检查”和“只读预检查”；未点击原生确认弹窗的“确认提交”不会发送签到。</p></footer>

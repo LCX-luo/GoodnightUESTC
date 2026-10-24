@@ -6,6 +6,7 @@ import json
 import re
 import secrets
 import ssl
+import socket
 import time
 import urllib.error
 import urllib.parse
@@ -139,8 +140,17 @@ def acquire(session, cache_json, callback, allow_qr):
         deadline = time.monotonic() + 210
         while time.monotonic() < deadline:
             cancelled(callback)
-            _, _, body = client.request('GET', 'https://long.open.weixin.qq.com/connect/l/qrconnect?' +
-                                       urllib.parse.urlencode({'uuid': uuid, '_': str(int(time.time()*1000))}), timeout=45)
+            try:
+                http_status, _, body = client.request('GET', 'https://long.open.weixin.qq.com/connect/l/qrconnect?' +
+                                           urllib.parse.urlencode({'uuid': uuid, '_': str(int(time.time()*1000))}), timeout=45)
+            except (TimeoutError, socket.timeout):
+                continue  # Long-poll timeout means pending, not lost authorization.
+            except urllib.error.URLError as error:
+                if isinstance(error.reason, (TimeoutError, socket.timeout)):
+                    continue
+                raise RuntimeError('qr_network_failed') from None
+            if http_status != 200:
+                raise RuntimeError('qr_http_' + str(http_status))
             text = body.decode()
             result = re.search(r'wx_errcode\s*=\s*(\d+)', text)
             if not result:
@@ -160,8 +170,9 @@ def acquire(session, cache_json, callback, allow_qr):
         else:
             raise RuntimeError('qr_expired')
         cancelled(callback)
+        callback.progress('微信已确认，正在接收授权凭据…')
         callback_client = Client()
-        url = CALLBACK + '?' + urllib.parse.urlencode({'code': oauth_code, 'state': 'web'})
+        url = CALLBACK + '?' + urllib.parse.urlencode({'login_type': 'WX', 'code': oauth_code, 'state': 'web'})
         for _ in range(6):
             status, headers, _ = callback_client.request('GET', url)
             values = {c.name: c.value for c in callback_client.cookies if
