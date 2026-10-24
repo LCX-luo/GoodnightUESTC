@@ -13,13 +13,15 @@ import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-public class MainActivity extends Activity {
+public class MainActivity extends Activity implements AuthSession.Screen {
     private static final String LOCAL="https://appassets.androidplatform.net/assets/";
     private WebView web;
+    private boolean pageReady;
     private SchoolClient school;
     private WeChatAuth wechat;
-    private final ExecutorService worker=Executors.newSingleThreadExecutor();
-    private final AtomicBoolean busy=new AtomicBoolean(false);
+    private ExecutorService worker;
+    private AuthSession runtime;
+    private AtomicBoolean busy;
     private android.content.SharedPreferences state;
     private final Handler main=new Handler(Looper.getMainLooper());
     @Override public void onCreate(Bundle saved) {
@@ -32,8 +34,9 @@ public class MainActivity extends Activity {
         WebSettings settings=web.getSettings(); settings.setJavaScriptEnabled(true); settings.setDomStorageEnabled(true);
         settings.setAllowFileAccess(false); settings.setAllowContentAccess(false);
         settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
-        school=new SchoolClient(settings.getUserAgentString());
-        wechat=new WeChatAuth(this,(kind,value)->emit(kind,value));
+        runtime=AuthSession.get(this,settings.getUserAgentString());
+        school=runtime.school; wechat=runtime.wechat; worker=runtime.worker; busy=runtime.busy;
+        android.util.Log.i("GoodnightAuth","activity_created recreated="+(saved!=null));
         web.addJavascriptInterface(new Bridge(),"Android");
         web.setWebViewClient(new WebViewClient() {
             @Override public boolean shouldOverrideUrlLoading(WebView view,WebResourceRequest r) {
@@ -60,6 +63,8 @@ public class MainActivity extends Activity {
             }
             @Override public void onPageFinished(WebView view,String url) {
                 if(url.equals(LOCAL+"index.html")) {
+                    pageReady=true;
+                    runtime.attach(MainActivity.this);
                     try {
                         JSONObject location=new JSONObject(state.getString("point","{\"lat\":30.6752,\"lng\":104.0975}"));
                         // v0.1.0 stored WGS84. Migrate that source once to the domestic GCJ02 map.
@@ -77,6 +82,10 @@ public class MainActivity extends Activity {
         return new WebResourceResponse("text/plain","UTF-8",403,"Forbidden",Collections.emptyMap(),new ByteArrayInputStream(new byte[0]));
     }
     private void emit(String kind,Object value) {
+        if(runtime!=null && !kind.equals("location")) { runtime.event(kind,value); return; }
+        show(kind,value);
+    }
+    @Override public void show(String kind,Object value) {
         main.post(()->{
             if(isFinishing()||isDestroyed()) return;
             web.evaluateJavascript("window.onNative("+JSONObject.quote(kind)+","+(value instanceof JSONObject?value.toString():JSONObject.quote(String.valueOf(value)))+")",null);
@@ -97,7 +106,7 @@ public class MainActivity extends Activity {
         @JavascriptInterface public void wechatAuthorize() {
             run(()->{ wechat.acquire(school.session(),true);emit("result","微信身份核对与取票成功，没有提交签到。可继续选择实际位置。 "); });
         }
-        @JavascriptInterface public void wechatCancel() { wechat.cancel();emit("qrhide",""); }
+        @JavascriptInterface public void wechatCancel() { wechat.cancel();emit("qrhide","");emit("wxstatus","已取消扫码授权，正在结束原等待任务；没有提交签到。"); }
         @JavascriptInterface public void wechatForget() {
             if(busy.get()) return;
             run(()->{ wechat.forget();emit("wxstatus","本机微信授权已清除，下次需要重新扫码。"); });
@@ -187,10 +196,19 @@ public class MainActivity extends Activity {
         super.onActivityResult(request,result,data);
         if(request==1 && result==RESULT_OK) new Bridge().check();
     }
+    @Override protected void onStart() {
+        super.onStart(); android.util.Log.i("GoodnightAuth","activity_started");
+        if(pageReady && runtime!=null) runtime.attach(this);
+    }
+    @Override protected void onStop() {
+        android.util.Log.i("GoodnightAuth","activity_stopped busy="+(busy!=null&&busy.get())); super.onStop();
+    }
     @Override public void onDestroy() {
-        if(wechat!=null) wechat.cancel();
-        // Allow an in-flight submission to finish recording its outcome. No network retry is added.
-        worker.shutdown(); if(!busy.get()) school.close();
+        // The process owns the task. Switching to WeChat or recreating this screen
+        // must not invalidate its QR or start another authorization. Explicit cancel is separate.
+        pageReady=false;
+        if(runtime!=null) runtime.detach(this);
+        android.util.Log.i("GoodnightAuth","activity_destroyed finishing="+isFinishing()+" changing="+isChangingConfigurations());
         if(web!=null) { web.removeJavascriptInterface("Android"); web.destroy(); }
         super.onDestroy();
     }

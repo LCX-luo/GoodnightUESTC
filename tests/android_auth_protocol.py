@@ -20,6 +20,71 @@ spec.loader.exec_module(phone)
 
 
 class PhoneProtocol(unittest.TestCase):
+    def poll(self, responses):
+        client, callback = MagicMock(), MagicMock()
+        client.request.side_effect = responses
+        callback.cancelled.return_value = False
+        return client, callback
+
+    def test_transient_disconnect_reuses_same_qr_then_authorizes(self):
+        client, callback = self.poll([phone.http.client.RemoteDisconnected('sensitive URL must not escape'),
+                                     (200, {}, b"window.wx_errcode=405;window.wx_code='synthetic-code';")])
+        with patch.object(phone.time, 'sleep'):
+            self.assertEqual(phone.wait_for_qr(client, 'same-uuid', callback), 'synthetic-code')
+        uuids = [phone.urllib.parse.parse_qs(phone.urllib.parse.urlsplit(c.args[1]).query)['uuid']
+                 for c in client.request.call_args_list]
+        self.assertEqual(uuids, [['same-uuid'], ['same-uuid']])
+        callback.diagnostic.assert_any_call('qr_remote_disconnected')
+        callback.diagnostic.assert_any_call('qr_poll_authorized')
+
+    def test_http_429_is_explicit_and_never_retried(self):
+        client, callback = self.poll([(429, {}, b'private server content')])
+        with self.assertRaisesRegex(RuntimeError, '^qr_http_429$'):
+            phone.wait_for_qr(client, 'same-uuid', callback)
+        self.assertEqual(client.request.call_count, 1)
+
+    def test_disconnect_retries_are_bounded_to_three(self):
+        client, callback = self.poll([ConnectionResetError('secret')] * 5)
+        with patch.object(phone.time, 'sleep'), self.assertRaisesRegex(RuntimeError, '^qr_connection_failed$'):
+            phone.wait_for_qr(client, 'same-uuid', callback)
+        self.assertEqual(client.request.call_count, 4)
+
+    def test_tls_verification_failure_is_fatal_without_retry(self):
+        error = phone.urllib.error.URLError(ssl.SSLCertVerificationError(1, 'private host'))
+        client, callback = self.poll([error])
+        with self.assertRaisesRegex(RuntimeError, '^qr_tls_certificate$'):
+            phone.wait_for_qr(client, 'same-uuid', callback)
+        self.assertEqual(client.request.call_count, 1)
+        context = phone.Client().opener
+        ssl_handler = next(handler for handler in context.handlers if isinstance(handler, phone.urllib.request.HTTPSHandler))
+        self.assertEqual(ssl_handler._context.verify_mode, ssl.CERT_REQUIRED)
+        self.assertTrue(ssl_handler._context.check_hostname)
+
+    def test_read_exception_classification_and_unknown_bridge_error_are_redacted(self):
+        for error, code in [(phone.http.client.IncompleteRead(b'secret'), 'qr_incomplete_read'),
+                            (phone.http.client.BadStatusLine('secret'), 'qr_bad_status_line'),
+                            (UnicodeDecodeError('utf-8', b'\xff', 0, 1, 'secret'), 'qr_response_encoding')]:
+            with self.subTest(code=code):
+                self.assertEqual(phone.poll_failure(error)[0], code)
+        with patch.object(phone, '_acquire', side_effect=ValueError('secret-token-and-URL')):
+            with self.assertRaisesRegex(RuntimeError, '^python_failure_valueerror$'):
+                phone.acquire('unused', '', MagicMock(), True)
+        with patch.object(phone, '_acquire', side_effect=ConnectionResetError(104, 'secret-token-and-URL')):
+            with self.assertRaisesRegex(RuntimeError, '^python_failure_connectionreseterror_errno_104$'):
+                phone.acquire('unused', '', MagicMock(), True)
+
+    def test_poll_statuses_match_sdk_and_unknown_is_not_silently_pending(self):
+        for status in (404, 408):
+            self.assertEqual(phone.poll_result(f'window.wx_errcode={status};'.encode()), (status, None))
+        self.assertEqual(phone.poll_result(b"window.wx_errcode=405;window.wx_code='synthetic-code';"),
+                         (405, 'synthetic-code'))
+        for body, reason in [(b'window.wx_errcode=403;', 'cancelled'),
+                             (b'window.wx_errcode=402;', 'qr_expired'),
+                             (b'window.wx_errcode=500;', 'qr_status_unrecognized'),
+                             (b'window.wx_errcode=405;', 'qr_unavailable')]:
+            with self.subTest(reason=reason), self.assertRaisesRegex(RuntimeError, reason):
+                phone.poll_result(body)
+
     def test_scan_timeout_then_confirmation_keeps_login_type_in_callback(self):
         client, exchange, callback = MagicMock(), MagicMock(), MagicMock()
         callback.cancelled.return_value = False

@@ -16,3 +16,6 @@ android/.kotlin/
 android/local.properties
 *.jks
 *.keystore
+
+downloads/web-portable-*/
+*.zip.sha256

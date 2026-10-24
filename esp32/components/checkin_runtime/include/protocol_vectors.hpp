@@ -1,0 +1,11 @@
+// Generated cross-language test vectors; all inputs are public fixtures.
+namespace fixtures {
+constexpr const char *aes192="889856f2efdce978b550a8ed8d2953868daa26549390926a09cefa0d5c";
+constexpr const char *point1="046b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c2964fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5";
+constexpr const char *point2="047cf27b188d034f7e8a52380304b51ac3c08969e277f21b35a60b48fc4766997807775510db8ed040293d9ac69f7430dbba7dade63ce982299e04b79d227873d1";
+constexpr const char *hkdf="96f3f29516add532d75b4c91790370bb04c1a85f17e33dc6b34851c12dec080cbfb42ccf1884029e2b72e46e5d52c314416241af157e1f0a";
+constexpr const char *cipher="e056f140ac5631dc9a2104f2dbe69064adc49f8c7aeda1a2fc56100def";
+constexpr const char *hello="0ca5b9d6c60f55767f9235a6184d7887574c482d6e519b10add1ef505b4388da";
+constexpr const char *pskhello="04d3ca1390c6eb59906f2a3f261bc99386eecdaa8797fd05edc586782eb820a2";
+constexpr const char *wpkg="20ca176b803cebf17e4400b7c326a273cb2d829ac7d69f22c400651c722620aa";
+}

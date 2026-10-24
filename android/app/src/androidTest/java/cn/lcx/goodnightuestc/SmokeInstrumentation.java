@@ -74,6 +74,32 @@ public class SmokeInstrumentation extends Instrumentation {
             fake=new FakeSchool(); final FakeSchool f=fake;
             Intent intent=new Intent(getTargetContext(),MainActivity.class); intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
             activity=(MainActivity)startActivitySync(intent);
+            // No network: keep a synthetic active authorization while Android destroys/recreates UI.
+            final MainActivity original=activity;
+            Field runtimeField=MainActivity.class.getDeclaredField("runtime"); runtimeField.setAccessible(true);
+            AuthSession retained=(AuthSession)runtimeField.get(original);
+            retained.busy.set(true);
+            retained.event("qr","synthetic-test-qr");
+            retained.event("progress","微信已确认，正在接收授权凭据…");
+            ActivityMonitor monitor=addMonitor(MainActivity.class.getName(),null,false);
+            runOnMainSync(original::recreate);
+            MainActivity replacement=(MainActivity)waitForMonitorWithTimeout(monitor,10000);
+            removeMonitor(monitor);
+            check(replacement!=null && replacement!=original,"activity actually recreated");
+            activity=replacement;
+            check(runtimeField.get(activity)==retained,"authorization runtime survives recreation");
+            check(retained.busy.get(),"recreation does not cancel authorization");
+            check(!retained.worker.isShutdown(),"recreation keeps task worker alive");
+            for(int retry=0;retry<30 && !"true".equals(js(activity,"typeof window.onNative==='function' && !document.getElementById('qr-panel').hidden"));retry++) Thread.sleep(200);
+            check("true".equals(js(activity,"!document.getElementById('qr-panel').hidden && document.getElementById('qr').src.endsWith('synthetic-test-qr')")),"same QR restored without new authorization");
+            check("true".equals(js(activity,"document.getElementById('wechat').disabled")),"cannot duplicate active authorization after recreation");
+            check("true".equals(js(activity,"document.getElementById('wxstatus').textContent.includes('正在接收授权凭据')")),"replay shows actual authorization stage instead of initial QR instruction");
+            js(activity,"document.getElementById('wxstatus').textContent='stale-ui';true");
+            final MainActivity resumed=activity;
+            runOnMainSync(()->callActivityOnStart(resumed));
+            check("true".equals(js(activity,"document.getElementById('wxstatus').textContent.includes('正在接收授权凭据')")),"return to foreground replays stage without restarting authorization");
+            check(runtimeField.get(activity)==retained && retained.busy.get(),"foreground replay keeps same active task");
+            retained.busy.set(false); retained.event("qrhide",""); retained.event("busy","false");
             final MainActivity a=activity;
             set(a,"wechat",new WeChatAuth(getTargetContext(),(kind,value)->{}) {
                 @Override String forSubmission(String session) { return "t".repeat(43); }

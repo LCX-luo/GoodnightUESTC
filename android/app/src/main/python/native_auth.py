@@ -1,6 +1,7 @@
 """Phone-local OAuth and school authorization; no attendance write capability."""
 import base64
 import hashlib
+import http.client
 import http.cookiejar
 import json
 import re
@@ -115,7 +116,113 @@ def cancelled(callback):
         raise RuntimeError('cancelled')
 
 
+def poll_result(body):
+    """Parse the protocol status; never expose OAuth code in diagnostics."""
+    text = body.decode()
+    result = re.search(r'wx_errcode\s*=\s*(\d+)', text)
+    if not result:
+        raise RuntimeError('qr_unavailable')
+    status = int(result[1])
+    if status == 405:
+        match = re.search(r"wx_code\s*=\s*'([^']+)'", text)
+        if not match:
+            raise RuntimeError('qr_unavailable')
+        return status, match[1]
+    if status == 403:
+        raise RuntimeError('cancelled')
+    if status == 402:
+        raise RuntimeError('qr_expired')
+    if status not in (404, 408):
+        raise RuntimeError('qr_status_unrecognized')
+    return status, None
+
+
+def poll_failure(error):
+    """Classify by exception type only: messages can contain credential URLs."""
+    if isinstance(error, urllib.error.URLError):
+        error = error.reason
+    if isinstance(error, ssl.SSLCertVerificationError):
+        return 'qr_tls_certificate', False
+    if isinstance(error, ssl.SSLError):
+        return 'qr_tls_failed', False
+    if isinstance(error, (TimeoutError, socket.timeout)):
+        return 'qr_network_timeout', True
+    if isinstance(error, http.client.RemoteDisconnected):
+        return 'qr_remote_disconnected', True
+    if isinstance(error, http.client.IncompleteRead):
+        return 'qr_incomplete_read', True
+    if isinstance(error, http.client.BadStatusLine):
+        return 'qr_bad_status_line', True
+    if isinstance(error, ConnectionError):
+        return 'qr_connection_failed', True
+    if isinstance(error, socket.gaierror):
+        return 'qr_dns_failed', True
+    if isinstance(error, UnicodeDecodeError):
+        return 'qr_response_encoding', False
+    return 'qr_network_failed', False
+
+
+def wait_for_qr(client, uuid, callback):
+    # Only these read-only status GETs can retry. OAuth code exchange and all
+    # school writes remain single attempts. Keep exactly the original QR uuid.
+    deadline, retries, last_status = time.monotonic() + 210, 0, None
+    while time.monotonic() < deadline:
+        cancelled(callback)
+        failure, retryable = None, False
+        try:
+            http_status, _, body = client.request(
+                'GET', 'https://long.open.weixin.qq.com/connect/l/qrconnect?' +
+                urllib.parse.urlencode({'uuid': uuid, '_': str(int(time.time()*1000))}),
+                timeout=min(45, max(0.1, deadline-time.monotonic())))
+            if http_status != 200:
+                failure = 'qr_http_' + str(http_status)
+                retryable = 500 <= http_status <= 599
+            else:
+                status, oauth_code = poll_result(body)
+        except (urllib.error.URLError, TimeoutError, ConnectionError, ssl.SSLError,
+                http.client.HTTPException, UnicodeDecodeError, socket.gaierror) as error:
+            failure, retryable = poll_failure(error)
+        if failure:
+            if not retryable or retries >= 3 or time.monotonic() + 1 >= deadline:
+                raise RuntimeError(failure) from None
+            retries += 1
+            callback.diagnostic(failure)
+            callback.progress('二维码状态连接中断，正在重连；请保留原二维码，不要重复授权。')
+            time.sleep(1)
+            continue
+        if status != last_status:
+            callback.diagnostic({408: 'qr_poll_pending', 404: 'qr_poll_scanned',
+                                 405: 'qr_poll_authorized'}[status])
+            last_status = status
+        if status == 405:
+            return oauth_code
+        if status == 404:
+            callback.progress('已识别二维码，请在微信确认授权，然后返回本应用。')
+        time.sleep(1)
+    raise RuntimeError('qr_expired')
+
+
 def acquire(session, cache_json, callback, allow_qr):
+    try:
+        return _acquire(session, cache_json, callback, allow_qr)
+    except Exception as error:
+        # No Python exception message/traceback may cross the bridge as a
+        # diagnostic: urllib and TLS messages can embed URLs or headers.
+        fixed = str(error) if isinstance(error, RuntimeError) else ''
+        if re.fullmatch(r'(?:cancelled|authorization_required|identity_mismatch|school_not_bound|'
+                        r'request_blocked|response_too_large|school_session_invalid|credential_invalid|'
+                        r'wechat_credential_rejected|oauth_credentials_missing|ticket_invalid|'
+                        r'qr_[a-z_]+|(?:qr|school|wechat)_http_[1-5]\d{2}|school_code_\d{1,9})', fixed):
+            raise RuntimeError(fixed) from None
+        kind = type(error).__name__.lower()
+        if not re.fullmatch(r'[a-z][a-z0-9_]{0,63}', kind):
+            kind = 'unknown'
+        errno = getattr(error, 'errno', None)
+        suffix = '_errno_' + str(errno) if type(errno) is int and 0 <= errno <= 9999 else ''
+        raise RuntimeError('python_failure_' + kind + suffix) from None
+
+
+def _acquire(session, cache_json, callback, allow_qr):
     client = Client()
     callback.progress('正在核对学校登录身份…')
     user = client.school('GET', '/daily-checkin/api/auth/user-info', session)['userData']
@@ -137,38 +244,7 @@ def acquire(session, cache_json, callback, allow_qr):
         if status != 200 or not image:
             raise RuntimeError('qr_unavailable')
         callback.qr(base64.b64encode(image).decode())
-        deadline = time.monotonic() + 210
-        while time.monotonic() < deadline:
-            cancelled(callback)
-            try:
-                http_status, _, body = client.request('GET', 'https://long.open.weixin.qq.com/connect/l/qrconnect?' +
-                                           urllib.parse.urlencode({'uuid': uuid, '_': str(int(time.time()*1000))}), timeout=45)
-            except (TimeoutError, socket.timeout):
-                continue  # Long-poll timeout means pending, not lost authorization.
-            except urllib.error.URLError as error:
-                if isinstance(error.reason, (TimeoutError, socket.timeout)):
-                    continue
-                raise RuntimeError('qr_network_failed') from None
-            if http_status != 200:
-                raise RuntimeError('qr_http_' + str(http_status))
-            text = body.decode()
-            result = re.search(r'wx_errcode\s*=\s*(\d+)', text)
-            if not result:
-                raise RuntimeError('qr_unavailable')
-            status = int(result[1])
-            if status == 405:
-                match = re.search(r"wx_code\s*=\s*'([^']+)'", text)
-                if not match:
-                    raise RuntimeError('qr_unavailable')
-                oauth_code = match[1]
-                break
-            if status in (402, 403):
-                raise RuntimeError('qr_expired')
-            if status == 404:
-                callback.progress('已识别二维码，请在微信确认授权，然后返回本应用。')
-            time.sleep(1)
-        else:
-            raise RuntimeError('qr_expired')
+        oauth_code = wait_for_qr(client, uuid, callback)
         cancelled(callback)
         callback.progress('微信已确认，正在接收授权凭据…')
         callback_client = Client()
