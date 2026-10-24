@@ -28,6 +28,7 @@ public class SmokeInstrumentation extends Instrumentation {
         boolean uncertain=false,failReadback=false;
         JSONObject payload;
         FakeSchool() { super("test-no-network"); }
+        @Override String session() { return "synthetic-school-session"; }
         @Override synchronized Object get(String path) throws Exception {
             reads++;
             if(path.equals(TODAY)) {
@@ -74,6 +75,10 @@ public class SmokeInstrumentation extends Instrumentation {
             Intent intent=new Intent(getTargetContext(),MainActivity.class); intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
             activity=(MainActivity)startActivitySync(intent);
             final MainActivity a=activity;
+            set(a,"wechat",new WeChatAuth(getTargetContext(),(kind,value)->{}) {
+                @Override String forSubmission(String session) { return "t".repeat(43); }
+            });
+            check(WeChatAuth.selfTest(getTargetContext()),"phone-local Python crypto and protocol import");
             SharedPreferences prefs=getTargetContext().getSharedPreferences("instrumentation-only",0); prefs.edit().clear().commit();
             set(a,"school",f); set(a,"state",prefs);
             for(int retry=0;retry<20 && !"true".equals(js(a,"typeof window.onNative==='function'"));retry++) Thread.sleep(200);

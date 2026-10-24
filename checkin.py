@@ -6,6 +6,7 @@ import time
 from core import (ReadOnlyTransport, ReadOnlySchool, Transport, School, ToolError,
                   ORIGIN, normalize_location, now, valid_today, window, check_fence, read_today)
 from moonuestc.policy import build_payload, verified, TERMINAL
+from moonuestc.operation_auth import operation_headers
 
 SUBMIT_URL = ORIGIN + '/daily-checkin/api/student-checkin-record/checkin'
 
@@ -55,9 +56,14 @@ class SubmissionTransport(ReadOnlyTransport):
 
 
 def school_for(snapshot, writable=False):
+    if writable:
+        # Fail before claiming today's attempt if official authorization is absent.
+        operation_headers(snapshot.get('operation_ticket'))
     transport = SubmissionTransport(snapshot) if writable else ReadOnlyTransport(snapshot)
     cls = School if writable else ReadOnlySchool
-    return cls(transport, {'student_id': snapshot['student_id']}, lambda: None, emit=lambda *a, **k: None)
+    return cls(transport, {'student_id': snapshot['student_id'],
+                          'operation_ticket': snapshot.get('operation_ticket')},
+               lambda: None, emit=lambda *a, **k: None)
 
 
 def configured_payload(snapshot, location):
@@ -140,7 +146,7 @@ def submit_checkin(snapshot, location, attempts, *, sleep=time.sleep, address=No
         school.submit(payload)
         result['response'] = 'accepted'
     except ToolError as error:
-        result.update(response='rejected' if error.reason == 'business_error' else 'unknown', reason=error.reason)
+        result.update(response='rejected' if error.reason in ('business_error', 'operation_ticket_rejected') else 'unknown', reason=error.reason)
         if error.api_code is not None:
             result['apiCode'] = error.api_code
     except Exception:

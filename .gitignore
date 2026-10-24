@@ -1,5 +1,6 @@
 .venv/
 private-data/
+源码/
 __pycache__/
 *.log
 *.png

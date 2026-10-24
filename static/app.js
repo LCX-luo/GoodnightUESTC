@@ -5,7 +5,7 @@ let refreshInFlight = false;
 const liveProgress=document.createElement('p');liveProgress.id='checkin-progress';liveProgress.className='live-progress';liveProgress.hidden=true;liveProgress.setAttribute('role','status');$('checkin-error').before(liveProgress);
 function toast(message) { $('toast').textContent=message; $('toast').hidden=false; clearTimeout(toast.timer); toast.timer=setTimeout(()=>$('toast').hidden=true,5000); }
 async function api(path, data) {
-  const controller=new AbortController();const timeout=setTimeout(()=>controller.abort(),path==='/api/checkin'?120000:path.includes('/test/online')||path.includes('/checkin/prepare')?60000:8000);
+  const controller=new AbortController();const timeout=setTimeout(()=>controller.abort(),path==='/api/checkin'?240000:path.includes('/test/online')||path.includes('/checkin/prepare')?60000:8000);
   try{const response=await fetch(path,{signal:controller.signal,method:data===undefined?'GET':'POST',credentials:'same-origin',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},...(data===undefined?{}:{body:JSON.stringify(data)})});
     const result=await response.json(); if(!response.ok)throw new Error(result.error||'操作失败');return result;
   }catch(e){if(e.name==='AbortError')throw new Error(path==='/api/checkin'?'响应超时，签到结果尚不明确，请先核对学校记录，勿重复提交。':'连接等待超时，请检查网络后重试。');throw e;}finally{clearTimeout(timeout);}
@@ -33,6 +33,14 @@ function dirtyLocation(){if(!$('latitude').value||!$('longitude').value)return t
 async function refresh(){
   if(refreshInFlight)return;refreshInFlight=true;try{
   const r=await api('/api/status');csrf=r.csrf;
+  const wx=r.wechat;
+  if(wx){$('wechat-message').textContent=wx.message+(wx.apiCode!==undefined?'（业务码 '+wx.apiCode+'）':'');
+    $('wechat-start').disabled=wx.active||!r.account||!wx.runtimeReady||submitting;
+    $('wechat-start').textContent=wx.active?'正在进行微信授权…':'微信授权并测试取票';
+    $('wechat-cancel').hidden=!wx.active;$('wechat-forget').disabled=wx.active||submitting;
+    const image=$('wechat-qr');image.hidden=!wx.qr||!wx.active;if(wx.qr&&image.src!==wx.qr)image.src=wx.qr;if(!wx.active)image.removeAttribute('src');
+    if(!wx.runtimeReady)$('wechat-message').textContent='微信授权环境未安装，请查看使用说明。';
+  }
   const active=['opening','waiting','verifying'].includes(r.login.state);loginBusy=active;
   $('login-button').disabled=active;$('cancel-login').hidden=!active;
   $('login-button').textContent=active?(r.login.state==='verifying'?'正在验证学校会话…':'等待学校登录完成…'):'用 Edge 登录并导入 ↗';
@@ -42,7 +50,7 @@ async function refresh(){
   $('login-message').textContent=r.login.state==='idle'&&r.account?'已保存会话，运行在线检查可验证是否有效。':r.login.message+(active&&r.login.elapsed!==undefined?`（已用 ${Math.floor(r.login.elapsed)} 秒）`:'');
   if(r.login.state==='success'&&refresh.previous!=='success')toast('Cookie 已自动导入，可进行在线只读检查。');refresh.previous=r.login.state;
   if(!refresh.initialized){fillLocation(r.location,false);refresh.initialized=true;}
-  $('prepare-checkin').disabled=!r.account||!savedLocation||active||submitting;
+  $('prepare-checkin').disabled=!r.account||!savedLocation||active||submitting||Boolean(wx&&wx.active);
   const op=r.operation;const working=op&&op.active;
   $('prepare-checkin').textContent=working&&op.kind==='prepare'?`正在预检查… ${Math.floor(op.elapsed)} 秒`:'预检查并确认签到 →';
   if(working){const message=op.message+`（已用 ${Math.floor(op.elapsed)} 秒）`;
@@ -65,6 +73,7 @@ $('login-form').addEventListener('submit',async e=>{e.preventDefault();$('login-
 $('show-password').addEventListener('click',()=>{const hide=$('password').type==='password';$('password').type=hide?'text':'password';$('show-password').textContent=hide?'隐藏':'显示';});
 $('cancel-login').addEventListener('click',async()=>{try{await api('/api/login/cancel',{});toast('已请求取消，窗口稍后关闭。');}catch(e){toast(e.message);}});
 $('forget').addEventListener('click',async()=>{try{await api('/api/session/forget',{});await refresh();toast('本机会话已清除。');}catch(e){toast(e.message);}});
+for(const action of ['start','cancel','forget'])$('wechat-'+action).addEventListener('click',async()=>{try{await api('/api/wechat/'+action,{});await refresh();}catch(e){toast(e.message);}});
 $('location-form').addEventListener('submit',async e=>{e.preventDefault();try{const r=await api('/api/location',currentLocation());fillLocation(r.location);toast('位置已保存在本机。');}catch(e){toast(e.message);}});
 for(const id of ['latitude','longitude','coordinate-system'])$(id).addEventListener('change',()=>{if($('latitude').value&&$('longitude').value){const loc=currentLocation();if(Number.isFinite(loc.latitude)&&Number.isFinite(loc.longitude)&&Math.abs(loc.latitude)<=90&&Math.abs(loc.longitude)<=180){showPoint(loc.latitude,loc.longitude,loc.coordinate_system,true);$('converted').textContent='位置已修改，请保存后运行检查。';}}});
 $('offline').addEventListener('click',()=>runTest('offline'));$('online').addEventListener('click',()=>runTest('online'));

@@ -16,16 +16,22 @@ let started=0,elapsed;
 function stopTimer(){clearInterval(elapsed);elapsed=null;}
 function begin(){started=Date.now();stopTimer();elapsed=setInterval(()=>{$('timer').textContent=`已用时 ${Math.floor((Date.now()-started)/1000)} 秒`;},500);}
 window.onNative=(kind,value)=>{
+ if(kind==='qr'){ $('qr').src='data:image/png;base64,'+value;$('qr-panel').hidden=false;$('wechat-cancel').hidden=false;$('wxstatus').textContent='请截图，用本人微信扫一扫从相册识别。'; }
+ if(kind==='qrhide'){ $('qr-panel').hidden=true;$('qr').removeAttribute('src');$('wechat-cancel').hidden=true; }
+ if(kind==='wxstatus')$('wxstatus').textContent=value;
  if(kind==='location')point(value.lat,value.lng,true);
  if(kind==='progress'||kind==='result')$('message').textContent=value;
  if(kind==='busy'){
   const busy=value==='true';document.querySelectorAll('.actions button').forEach(b=>b.disabled=busy);
-  if(busy)begin();else stopTimer();
+  if(busy)begin();else {stopTimer();$('qr-panel').hidden=true;$('qr').removeAttribute('src');$('wechat-cancel').hidden=true;}
  }
 };
 $('login').onclick=()=>Android.login();
 $('check').onclick=()=>Android.check();
 $('logout').onclick=()=>Android.logout();
+$('wechat').onclick=()=>Android.wechatAuthorize();
+$('wechat-forget').onclick=()=>Android.wechatForget();
+$('wechat-cancel').onclick=()=>Android.wechatCancel();
 function prepare(confirm){
  const lat=Number($('lat').value),lng=Number($('lng').value);
  if(!$('lat').value.trim()||!$('lng').value.trim()||!Number.isFinite(lat)||!Number.isFinite(lng)||Math.abs(lat)>90||Math.abs(lng)>180){$('message').textContent='请输入有效经纬度';return;}

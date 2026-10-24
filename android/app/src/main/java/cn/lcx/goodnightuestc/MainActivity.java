@@ -17,6 +17,7 @@ public class MainActivity extends Activity {
     private static final String LOCAL="https://appassets.androidplatform.net/assets/";
     private WebView web;
     private SchoolClient school;
+    private WeChatAuth wechat;
     private final ExecutorService worker=Executors.newSingleThreadExecutor();
     private final AtomicBoolean busy=new AtomicBoolean(false);
     private android.content.SharedPreferences state;
@@ -32,6 +33,7 @@ public class MainActivity extends Activity {
         settings.setAllowFileAccess(false); settings.setAllowContentAccess(false);
         settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
         school=new SchoolClient(settings.getUserAgentString());
+        wechat=new WeChatAuth(this,(kind,value)->emit(kind,value));
         web.addJavascriptInterface(new Bridge(),"Android");
         web.setWebViewClient(new WebViewClient() {
             @Override public boolean shouldOverrideUrlLoading(WebView view,WebResourceRequest r) {
@@ -92,6 +94,14 @@ public class MainActivity extends Activity {
         worker.execute(()->{ try { job.run(); } catch(Exception ex) { error(ex); } finally { busy.set(false); emit("busy","false"); } });
     }
     final class Bridge {
+        @JavascriptInterface public void wechatAuthorize() {
+            run(()->{ wechat.acquire(school.session(),true);emit("result","微信身份核对与取票成功，没有提交签到。可继续选择实际位置。 "); });
+        }
+        @JavascriptInterface public void wechatCancel() { wechat.cancel();emit("qrhide",""); }
+        @JavascriptInterface public void wechatForget() {
+            if(busy.get()) return;
+            run(()->{ wechat.forget();emit("wxstatus","本机微信授权已清除，下次需要重新扫码。"); });
+        }
         @JavascriptInterface public void login() {
             if(busy.get()) return;
             main.post(()->startActivityForResult(new Intent(MainActivity.this,LoginActivity.class),1));
@@ -116,7 +126,7 @@ public class MainActivity extends Activity {
         @JavascriptInterface public void logout() {
             if(busy.get()) return;
             main.post(()->new AlertDialog.Builder(MainActivity.this).setMessage("清除本应用保存的学校会话？提交防重复记录会保留。").setNegativeButton("取消",null)
-                .setPositiveButton("清除",(d,w)->CookieManager.getInstance().removeAllCookies(ok->{ CookieManager.getInstance().flush(); WebStorage.getInstance().deleteAllData(); web.clearCache(true); emit("result","学校会话已清除"); })).show());
+                .setPositiveButton("清除",(d,w)->{ try { wechat.forget(); } catch(Exception ignored) { } CookieManager.getInstance().removeAllCookies(ok->{ CookieManager.getInstance().flush(); WebStorage.getInstance().deleteAllData(); web.clearCache(true); emit("result","学校会话和本地微信授权已清除"); }); }).show());
         }
     }
     private String precheck(double[] point) throws Exception {
@@ -163,6 +173,13 @@ public class MainActivity extends Activity {
         if(!day.equals(SchoolClient.day())||SystemClock.elapsedRealtime()-prepared>120000) throw new IOException("确认已过期，请重新预检查");
         SchoolClient.window(schedule);
         if(state.contains("attempt:"+day)) throw new IOException("本机今天已有提交尝试，请到学校核对");
+        progress("正在核对并获取本次微信操作授权…");
+        String beforeSession=school.session();
+        String operationTicket=wechat.forSubmission(beforeSession);
+        if(!beforeSession.equals(school.session())) throw new IOException("学校账号发生变化，请重新预检查");
+        if(!day.equals(SchoolClient.day())||SystemClock.elapsedRealtime()-prepared>120000) throw new IOException("确认已过期，请重新预检查");
+        SchoolClient.window(schedule);
+        if(!"PENDING".equals(SchoolClient.validate(school.today()))) throw new IOException("当天已有记录，已停止提交");
         JSONObject payload=new JSONObject().put("latitude",point[0]).put("longitude",point[1]).put("reverseGeocode",address)
             .put("coordinateSystemCode","gcj02").put("accuracy",0).put("locationDurationMs",0).put("networkTypeCode","unknown")
             .put("locationEnabled",false).put("locationAuthorized","").put("locationAccuracy","").put("errorMessage","")
@@ -171,7 +188,10 @@ public class MainActivity extends Activity {
         // Synchronous durable claim survives process death; intentionally conservative across accounts.
         if(!state.edit().putString("attempt:"+day,"started").commit()) throw new IOException("无法保存提交标记，已停止");
         progress("正在提交一次签到请求…");
-        try { school.post(payload); } catch(Exception ignored) { /* An uncertain POST is never resent. */ }
+        String rejection="";
+        try { school.setOperationTicket(operationTicket);school.post(payload); }
+        catch(Exception ex) { rejection=ex instanceof IOException?ex.getMessage():""; }
+        finally { wechat.consume(); }
         for(int i=0;i<3;i++) {
             progress("正在回读学校记录（"+(i+1)+"/3）…");
             try {
@@ -182,13 +202,14 @@ public class MainActivity extends Activity {
             if(i<2) Thread.sleep(2000);
         }
         state.edit().putString("attempt:"+day,"uncertain").commit();
-        emit("result","结果尚未确认。请求不会自动重发，请稍后在线检查或进入学校官方入口核对。");
+        emit("result","结果尚未确认。请求不会自动重发，请稍后在线检查或进入学校官方入口核对。"+(rejection==null?"":"\n"+rejection));
     }
     @Override protected void onActivityResult(int request,int result,Intent data) {
         super.onActivityResult(request,result,data);
         if(request==1 && result==RESULT_OK) new Bridge().check();
     }
     @Override public void onDestroy() {
+        if(wechat!=null) wechat.cancel();
         // Allow an in-flight submission to finish recording its outcome. No network retry is added.
         worker.shutdown(); if(!busy.get()) school.close();
         if(web!=null) { web.removeJavascriptInterface("Android"); web.destroy(); }

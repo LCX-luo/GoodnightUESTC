@@ -104,6 +104,16 @@ class BrowserLogin:
                                 last_probe = time.monotonic()
                                 snapshot = {'student_id': student, 'cookies': context.cookies([ORIGIN, CAS]),
                                             'user_agent': user_agent, 'saved_at': time.time()}
+                                # Read only the official H5 origin; keep authorization encrypted
+                                # with its session, never in status responses or console output.
+                                current = urlsplit(page.url)
+                                if current.hostname == 'jzsz.uestc.edu.cn' and current.path.startswith('/daily-checkin-h5/'):
+                                    try:
+                                        ticket = page.evaluate("() => sessionStorage.getItem('daily-checkin-operation-ticket') || ''")
+                                        if isinstance(ticket, str) and re.fullmatch(r'[!-~]{1,8192}', ticket):
+                                            snapshot['operation_ticket'] = ticket
+                                    except Exception:
+                                        pass
                                 try:
                                     self.update('verifying', '正在验证学校会话并保存 Cookie…')
                                     verify_session(snapshot)

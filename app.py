@@ -11,6 +11,7 @@ from core import ROOT, DATA_ROOT, LocalStore, ToolError, offline_test, online_te
 from browser_login import BrowserLogin
 from checkin import Attempts, prepare_checkin, submit_checkin
 from progress import Progress
+from wechat_auth import WeChatAuthorization
 
 MESSAGES = {
     'write_blocked': '测试模式已拦截学校写入请求。',
@@ -18,6 +19,14 @@ MESSAGES = {
     'invalid_configured_coordinates': '经纬度超出有效范围或不是有限数字。',
     'coordinate_system_mismatch': '请选择 WGS-84 或 GCJ-02。',
     'session_rejected': '学校会话已失效，请重新登录。',
+    'operation_ticket_required': '缺少官方小程序签到授权。网页登录成功不等于已取得操作票据；本次没有提交。',
+    'operation_ticket_invalid': '官方操作票据格式无效，本次没有提交。',
+    'operation_ticket_rejected': '学校拒绝了操作票据，请从官方小程序重新进入并授权，不要重复提交。',
+    'operation_ticket_pending': '本次授权已使用或结果待确认，请先查询学校当天记录，不要重复提交。',
+    'wechat_busy': '微信授权正在进行，请先完成或取消。',
+    'wechat_runtime_required': '请先按使用说明安装独立的微信授权环境。',
+    'wechat_school_session_required': '未找到唯一有效的学校会话，请重新通过 Edge 登录。',
+    'wechat_authorization_required': '请先点击微信授权并扫码。',
     'portal_session_rejected': '学校会话已失效，请重新登录。',
     'micro_app_unauthorized': '智慧学工打卡应用未授权，请重新登录并完成页面提示。',
     'network_error': '无法连接学校网络，请检查连接后重试。',
@@ -32,19 +41,20 @@ MESSAGES = {
 }
 
 
-def create_app(data_dir=None):
+def create_app(data_dir=None, *, profiles_enabled=True):
     app = Flask(__name__, static_folder=str(ROOT / 'static'))
     app.secret_key = secrets.token_bytes(32)
     app.config.update(MAX_CONTENT_LENGTH=16384, SESSION_COOKIE_HTTPONLY=True,
                       SESSION_COOKIE_SAMESITE='Strict')
     store = LocalStore(data_dir or DATA_ROOT / 'private-data')
     login = BrowserLogin(store)
+    wechat = WeChatAuthorization(store)
     attempts = Attempts(store.directory)
     test_lock = threading.Lock()
     operation = Progress()
     pending = {}
     pending_lock = threading.Lock()
-    app.extensions.update(local_store=store, browser_login=login)
+    app.extensions.update(local_store=store, browser_login=login, wechat_authorization=wechat)
 
     @app.before_request
     def protect():
@@ -54,6 +64,8 @@ def create_app(data_dir=None):
             expected = 'http://' + request.host
             if request.headers.get('Origin') != expected:
                 return jsonify(error='请求来源不匹配，请从本机页面操作。'), 403
+            if request.endpoint == 'profile_proxy':
+                return None  # The isolated child app enforces its own CSRF cookie/token.
             token = session.get('csrf', '')
             if not token or not secrets.compare_digest(request.headers.get('X-CSRF-Token', ''), token):
                 return jsonify(error='页面会话已更新，请刷新页面。'), 403
@@ -93,14 +105,36 @@ def create_app(data_dir=None):
         return jsonify(product='GoodNightUESTC', csrf=session['csrf'], mode='manual', schoolWritesEnabled=True,
                        account=({'student_id': saved['student_id'],
                                  'saved_at': saved['saved_at'], 'cookie_count': len(saved['cookies'])} if saved else None),
-                       location=store.location(), login=login.status(), operation=operation.snapshot())
+                       location=store.location(), login=login.status(), operation=operation.snapshot(), wechat=wechat.status())
+
+    @app.post('/api/wechat/start')
+    def wechat_start():
+        if test_lock.locked() or (login.thread and login.thread.is_alive()):
+            return jsonify(error='请先等待当前登录或检查完成。'), 409
+        snapshot = store.session()
+        if not snapshot:
+            return jsonify(error='请先登录本人学校账号。'), 400
+        wechat.start(snapshot)
+        return jsonify(ok=True), 202
+
+    @app.post('/api/wechat/cancel')
+    def wechat_cancel():
+        wechat.cancel()
+        return jsonify(ok=True)
+
+    @app.post('/api/wechat/forget')
+    def wechat_forget():
+        if test_lock.locked() or wechat.status()['active']:
+            return jsonify(error='请先完成或取消当前操作。'), 409
+        wechat.forget()
+        return jsonify(ok=True)
 
     @app.post('/api/login')
     def start_login():
         data = request.get_json()
         if not isinstance(data, dict) or not all(isinstance(data.get(k), str) for k in ('student_id', 'password')):
             return jsonify(error='请输入学号和密码。'), 400
-        if test_lock.locked():
+        if test_lock.locked() or wechat.status()['active']:
             return jsonify(error='正在执行检查，请稍后再登录。'), 409
         try:
             login.start(data['student_id'].strip(), data['password'])
@@ -115,8 +149,11 @@ def create_app(data_dir=None):
 
     @app.post('/api/session/forget')
     def forget():
+        if test_lock.locked() or wechat.status()['active']:
+            return jsonify(error='请先完成或取消当前操作。'), 409
         if login.thread and login.thread.is_alive():
             return jsonify(error='请先取消登录，等待登录窗口关闭后再清除。'), 409
+        wechat.forget()
         store.forget()
         return jsonify(ok=True)
 
@@ -130,6 +167,8 @@ def create_app(data_dir=None):
 
     @app.post('/api/checkin/prepare')
     def prepare():
+        if wechat.status()['active']:
+            return jsonify(error='请先完成或取消微信授权。'), 409
         if login.thread and login.thread.is_alive():
             return jsonify(error='请先完成或取消登录。'), 409
         if not test_lock.acquire(blocking=False):
@@ -157,6 +196,8 @@ def create_app(data_dir=None):
 
     @app.post('/api/checkin')
     def checkin():
+        if wechat.status()['active']:
+            return jsonify(error='请先完成或取消微信授权。', submitted=False), 409
         data = request.get_json()
         if (not isinstance(data, dict) or data.get('confirm') is not True
                 or data.get('actual_location_confirmed') is not True
@@ -176,7 +217,11 @@ def create_app(data_dir=None):
                     or ticket['binding'] != binding(snapshot, point)):
                 return jsonify(error='确认已过期或账号、位置已变化，请重新预检查。', submitted=False), 400
             with operation.operation('checkin'):
+                operation.step('正在检查本次微信操作授权…')
+                snapshot = wechat.for_submission(snapshot)
                 result = submit_checkin(snapshot, point, attempts, address=ticket.get('address'), progress=operation.step)
+                if result.get('submitted'):
+                    wechat.consume_local_ticket()
             return jsonify(ok=True, result=result)
         finally:
             test_lock.release()
@@ -201,6 +246,9 @@ def create_app(data_dir=None):
         finally:
             test_lock.release()
 
+    if profiles_enabled:
+        from accounts import install_accounts
+        install_accounts(app, store, ROOT, create_app)
     return app
 
 

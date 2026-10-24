@@ -21,6 +21,22 @@ class SchoolClient {
     private Proxy route;
     private long routeAt;
     private final String agent;
+    private String operationTicket;
+    synchronized void setOperationTicket(String ticket) throws IOException {
+        if(ticket==null||!ticket.matches("[A-Za-z0-9_-]{43}")) throw new IOException("缺少有效微信操作授权");
+        operationTicket=ticket;
+    }
+    static String schoolSession() throws IOException {
+        String cookies=CookieManager.getInstance().getCookie(ORIGIN+"/daily-checkin/api/auth/user-info");
+        Set<String> values=new HashSet<>();
+        if(cookies!=null) for(String part:cookies.split(";")) {
+            String[] pair=part.trim().split("=",2);
+            if(pair.length==2&&pair[0].equals("SESSION")&&!pair[1].isEmpty()) values.add(pair[1]);
+        }
+        if(values.size()!=1) throw new IOException("请先登录学校账号，未找到唯一有效学校会话");
+        return values.iterator().next();
+    }
+    String session() throws IOException { return schoolSession(); }
     private final ExecutorService probes=Executors.newFixedThreadPool(2);
     SchoolClient(String agent) { this.agent=agent; }
     void close() { probes.shutdownNow(); }
@@ -44,6 +60,9 @@ class SchoolClient {
             String cookies=CookieManager.getInstance().getCookie(ORIGIN);
             if (cookies!=null) c.setRequestProperty("Cookie",cookies);
             if(post) {
+                if(operationTicket==null) throw new IOException("请先完成微信授权");
+                c.setRequestProperty("X-Checkin-Ticket",operationTicket);
+                operationTicket=null;
                 byte[] bytes=payload.toString().getBytes(StandardCharsets.UTF_8);
                 c.setDoOutput(true); c.setRequestProperty("Content-Type","application/json;charset=UTF-8");
                 c.setFixedLengthStreamingMode(bytes.length);
@@ -63,10 +82,11 @@ class SchoolClient {
             }
             JSONObject envelope;
             try { envelope=new JSONObject(body); } catch(JSONException ex) { throw new IOException("未收到学校 JSON 数据，请重新登录"); }
-            if(!envelope.has("code") || envelope.optInt("code",-1)!=0) {
+            if(!envelope.has("code") || envelope.optInt("code",-1)!=0 || Boolean.FALSE.equals(envelope.opt("ok"))) {
                 // Do not echo upstream messages, which can contain account/session information.
                 throw new IOException("学校未接受请求（代码 "+envelope.optInt("code",-1)+"），请检查登录或使用官方入口");
             }
+            if(post) return envelope.opt("data");
             if(envelope.isNull("data")) throw new IOException("学校返回空数据");
             return envelope.get("data");
         } finally { c.disconnect(); }
@@ -102,7 +122,7 @@ class SchoolClient {
     }
     synchronized void post(JSONObject payload) throws Exception {
         if(route==null) throw new IOException("请先运行在线检查以确定网络连接");
-        request(POST,payload,route); // Exactly one attempt, even on timeout or server rejection.
+        try { request(POST,payload,route); } finally { operationTicket=null; } // Never retry.
     }
     JSONObject today() throws Exception {
         JSONObject record=(JSONObject)get(TODAY); validate(record); return record;

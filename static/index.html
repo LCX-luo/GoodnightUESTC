@@ -5,6 +5,7 @@
 <header><a class="brand" href="/">☾ <span>晚安成电<small>LOCAL WORKSPACE</small></span></a><span class="mode"><i></i> 手动签到 · 本机运行</span></header>
 <main>
 <section class="intro"><div><p class="eyebrow">你的账号，你的本机工作台</p><h1>选择位置，确认签到。</h1><p class="lede">登录学校账号，在地图选择实际位置，完成今天的晚安签到。</p></div><div class="safety"><span>每一次签到</span><strong>由你确认 <span>↗</span></strong><small>提交后回读学校记录核对结果</small></div></section>
+<p class="help"><a href="/accounts">管理多个账号的登录与微信授权 →</a></p>
 <div class="workspace">
 <section class="card account-card"><div class="section-title"><span class="step">01</span><div><h2>学校账号</h2><p>Edge 登录 · Cookie 自动保存</p></div><span id="session-badge" class="badge">未登录</span></div>
 <form id="login-form"><label for="student-id">学号</label><input id="student-id" name="username" inputmode="numeric" autocomplete="username" pattern="[0-9]{8,20}" placeholder="输入学校学号" required><label for="password">统一认证密码</label><div class="password-wrap"><input id="password" type="password" autocomplete="current-password" placeholder="密码仅用于本次登录" required maxlength="256"><button id="show-password" type="button" class="text-button">显示</button></div><button class="button primary full" id="login-button" type="submit">用 Edge 登录并导入 <span>↗</span></button></form>
@@ -12,6 +13,7 @@
 <div class="account-state"><span class="dot" id="account-dot"></span><div><strong id="account-label">等待导入学校账号</strong><p id="login-message" aria-live="polite">不需要手动复制 Cookie。</p></div></div>
 <div class="small-actions"><button id="cancel-login" class="text-button" type="button" hidden>取消本次登录</button><button id="forget" class="text-button" type="button">清除本机会话</button></div>
 <div class="privacy-note"><span>⌑</span><p>学校密码不写入磁盘。Cookie 仅加密保存在本项目中，不展示、不导出到页面。</p></div>
+<div class="wechat-panel"><h3>微信操作授权 · 实验功能</h3><p class="help">学校登录后，用绑定该账号的本人微信扫码。这里只验证身份并获取票据，不提交签到。使用第三方协议，不能保证持续可用或没有账号风控。</p><button id="wechat-start" class="button secondary full" type="button">微信授权并测试取票</button><p id="wechat-message" class="help" aria-live="polite"></p><img id="wechat-qr" alt="请用本人微信扫描授权二维码" width="240" height="240" hidden><div class="small-actions"><button id="wechat-cancel" type="button" class="text-button" hidden>取消授权</button><button id="wechat-forget" type="button" class="text-button">清除微信授权</button></div></div>
 </section>
 <section class="card location-card"><div class="section-title"><span class="step">02</span><div><h2>选择实际位置</h2><p>点击地图选点，或手动输入坐标</p></div><nav class="campus-switch" aria-label="查看校区"><span>查看</span><button id="campus-shahe" type="button" aria-pressed="true">沙河</button><button id="campus-qingshuihe" type="button" aria-pressed="false">清水河</button></nav></div>
 <div class="map-shell"><div id="map" aria-label="点击地图选择位置"></div><div class="map-tip" id="map-tip">点击地图，设置你的实际位置</div></div>

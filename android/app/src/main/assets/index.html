@@ -5,6 +5,7 @@
 <header><span class="tag">ANDROID · 本机运行</span><h1>晚安成电</h1><p>登录本人账号，选择实际位置，核对后签到。</p></header>
 <section><h2>学校账号</h2><p>通过学校官方页面登录。验证码和二次验证由本人完成，会话保存在此手机。</p>
 <div class="actions"><button id="login">学校账号登录</button><button id="check" class="secondary">在线检查</button><button id="logout" class="text">清除会话</button></div></section>
+<section><h2>微信操作授权</h2><p>学校登录后，显示二维码并截图；打开微信“扫一扫 → 相册”识别，核对后确认授权，再返回本应用。首次需要扫码，授权失效时重新扫码。</p><p class="muted">使用第三方协议，不需要 Root，不保证没有账号风控。授权和取票本身不会提交签到。</p><div class="actions"><button id="wechat">显示二维码 / 验证授权</button><button id="wechat-forget" class="text">清除微信授权</button></div><div id="qr-panel" hidden><img id="qr" width="240" height="240" alt="微信授权二维码"><p>二维码约几分钟有效，请尽快截图并在本人微信授权。若微信不允许相册识别，可用另一台设备展示后扫描。</p></div><button id="wechat-cancel" class="text" hidden>取消本次授权</button><p id="wxstatus" class="muted">尚未检查微信授权。</p></section>
 <section><div class="maphead"><h2>实际位置</h2><div><button class="text" id="shahe">沙河</button><button class="text" id="qingshuihe">清水河</button></div></div>
 <p>点击地图选择本人实际位置。双指缩放、单指拖动；查看校区不会更改已选位置。</p>
 <div id="map" aria-label="地图"></div>

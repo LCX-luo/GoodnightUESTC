@@ -1,5 +1,11 @@
 # Third-party acknowledgements and licenses
 
+## Local Android 0.2.0 authorization build (2026-10-24)
+
+The Android authorization runtime uses Chaquopy 17.1.0 (https://github.com/chaquo/chaquopy), cryptography 42.0.8 and certifi 2026.10.23; their own notices and distribution terms apply. They are not project-authored code.
+
+Four MMTLS protocol modules are fetched at build time from https://github.com/MioYiSama/moon-uestc, commit f8a93c3bc4d62cea879b76560c49c9646387b386. Their source in turn credits YYB-Go-Enhanced commit 8a9497397abc7bf736be462f2e293f2bc6d4d0c0. The original module docstrings are retained, original hashes are recorded in generated SOURCE.json, and only annotation-only Pydantic imports are adapted. Upstream main.py, caches and credentials are excluded. These fetched sources are not committed or relicensed under this project's MIT license. This is a local test build; upstream distribution permissions must be reviewed before a public release.
+
 MoonUESTC is independently written integration and dashboard code, distributed under the MIT license in LICENSE.
 
 ## Referenced projects

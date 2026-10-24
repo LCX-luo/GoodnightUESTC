@@ -8,6 +8,7 @@ from html.parser import HTMLParser
 
 from .errors import AuthRequired, ToolError
 from .diagnostics import school_message
+from .operation_auth import operation_headers
 
 ORIGIN = "https://jzsz.uestc.edu.cn"
 CAS = "https://idas.uestc.edu.cn/authserver"
@@ -61,9 +62,12 @@ class School:
         self.submission_response = None
 
     def api(self, path, *, stage, payload=None):
+        headers = dict(HEADERS)
+        if payload is not None and path == '/student-checkin-record/checkin':
+            headers.update(operation_headers(self.account.get('operation_ticket')))
         r = self.transport.request("POST" if payload is not None else "GET",
                                    ORIGIN + "/daily-checkin/api" + path,
-                                   headers=HEADERS, payload=payload, stage=stage)
+                                   headers=headers, payload=payload, stage=stage)
         # Parse only JSON metadata; never keep raw bodies, HTML or response headers.
         try:data = r.json(stage)
         except ToolError:data = None
@@ -89,6 +93,10 @@ class School:
                 r"登录|会话|未认证", str(data.get("msg", "")))):
             raise failure(AuthRequired,"session_rejected")
         if code != 0 or data.get("ok") is False:
+            if code == 46004:
+                raise failure(ToolError, 'operation_ticket_pending')
+            if code in (46001, 46002, 46003):
+                raise failure(ToolError, 'operation_ticket_rejected')
             raise failure(ToolError,"business_error")
         return data.get("data")
 
