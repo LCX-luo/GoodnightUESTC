@@ -51,7 +51,7 @@ python bootstrap.py --install-only
 
 [部署教程与 AI Agent 接手说明](esp32/README.md) · [关键源码](esp32/components/checkin_runtime) · [账号资料库](docs/accounts-and-esp32.md) · [手机管理关键代码与 Agent 教程](esp32/phone-companion/README.md)
 
-**目前是实验源码。设备已实测独立取票并提交，学校在时段外返回 4006“当前不在打卡时间段内”；尚未验证时段内新建签到及跨日无人值守。** 适配经典 ESP32、4 MB Flash、ESP-IDF 5.1.2。仅提供关键组件与通用 Agent 接入指引，不分发个人固件或配置。
+**目前是实验源码。设备已实测独立取票并提交，学校在时段外返回 4006“当前不在打卡时间段内”；尚未验证时段内新建签到及跨日无人值守。** 适配经典 ESP32、4 MB Flash、ESP-IDF 5.1.2。已提供完整独立 ESP-IDF 工程、关键组件与 Agent 接入指引；独立工程编译通过，尚未单独上板验证。不分发含个人配置的固件。
 
 1. 按 Windows 教程准备账号库，逐账号完成学校登录、本人微信授权和实际位置保存。
 2. 识别开发板、完整备份原 Flash 并核对分区，保护已有分区数据。

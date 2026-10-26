@@ -22,3 +22,10 @@ downloads/web-portable-*/
 
 /goodnight-esp32-*/
 /tmp*idf_*
+
+esp32/build/
+esp32/sdkconfig
+esp32/sdkconfig.old
+esp32/sdkconfig.defaults.local
+esp32/phone-management.local.json
+esp32/managed_components/

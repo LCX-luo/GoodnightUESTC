@@ -95,7 +95,8 @@ def run(config):
             fresh = wechat.get_code(app_id='wxaa78bf2905f01cee', credentials=credentials)
             ticket = mini.auth.request_checkin_ticket(code=fresh).data.ticket
         emit('complete', ticket=ticket.get_secret_value(), student_id=expected.username,
-             submitted=False, code_lengths=[len(code.get_secret_value()), len(fresh.get_secret_value())])
+             submitted=False, session=binding.session_id.get_secret_value(),
+             code_lengths=[len(code.get_secret_value()), len(fresh.get_secret_value())])
 
 
 if __name__ == '__main__':

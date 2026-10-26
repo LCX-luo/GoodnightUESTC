@@ -36,13 +36,14 @@ class AuthorizationTests(unittest.TestCase):
 
     def complete(self, **changes):
         return {'event': 'complete', 'ticket': 't' * 43, 'student_id': SNAPSHOT['student_id'],
-                'submitted': False, 'code_lengths': [32, 32], **changes}
+                'submitted': False, 'session':'paired-mini-session', 'code_lengths': [32, 32], **changes}
 
     def test_credentials_and_ticket_encrypted_without_status_leak(self):
         proc = self.worker([{'event': 'credentials', 'credentials': TOKEN}, self.complete()])
         with patch('wechat_auth.subprocess.Popen', return_value=proc):
             saved = self.auth.execute(SNAPSHOT, allow_qr=True)
         self.assertEqual(saved['operation_ticket'], 't' * 43)
+        self.assertEqual(school_session(saved),'paired-mini-session')
         self.assertEqual(self.auth.cached(SNAPSHOT), TOKEN)
         for filename in ('wechat.enc', 'session.enc'):
             raw = (Path(self.temp.name) / filename).read_bytes()
@@ -56,7 +57,7 @@ class AuthorizationTests(unittest.TestCase):
         self.assertIsNone(self.auth.cached({**SNAPSHOT, 'student_id': 'other'}))
 
     def test_wrong_identity_or_unexpected_submit_cannot_install_ticket(self):
-        for changes in ({'student_id': 'other'}, {'submitted': True}, {'ticket': 'invalid'}):
+        for changes in ({'student_id': 'other'}, {'submitted': True}, {'ticket': 'invalid'}, {'session': None}, {'session':'bad;cookie'}):
             with self.subTest(changes=changes):
                 proc = self.worker([self.complete(**changes)])
                 with patch('wechat_auth.subprocess.Popen', return_value=proc), self.assertRaises(ToolError):
@@ -89,3 +90,14 @@ class AuthorizationTests(unittest.TestCase):
         with patch('wechat_auth.subprocess.Popen') as launch, self.assertRaises(ToolError):
             self.auth.execute(SNAPSHOT, allow_qr=False)
         launch.assert_not_called()
+
+    def test_worker_failure_updates_state_and_keeps_credentials_private(self):
+        process=self.worker([{'event':'step','message':'正在验证浏览器学校身份…'},
+            {'event':'error','reason':'AuthenticationError','apiCode':5000}])
+        with patch('wechat_auth.subprocess.Popen',return_value=process),self.assertRaises(ToolError):
+            self.auth.execute(SNAPSHOT,allow_qr=True)
+        state=self.auth.status()
+        self.assertEqual(state['state'],'error')
+        self.assertEqual(state['apiCode'],5000)
+        self.assertIn('重新登录',state['message'])
+        self.assertNotIn('school-secret',json.dumps(state))

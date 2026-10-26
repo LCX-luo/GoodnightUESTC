@@ -163,6 +163,15 @@ class WeChatAuthorization:
                         if (event.get('submitted') is not False or event.get('student_id') != snapshot['student_id']
                                 or not re.fullmatch(r'[A-Za-z0-9_-]{43}', event['ticket'])):
                             raise ToolError('wechat_worker_protocol')
+                        paired_session = event.get('session')
+                        if (not isinstance(paired_session, str) or not 0 < len(paired_session) < 1024
+                                or any(c in paired_session for c in '\r\n;"\\')):
+                            raise ToolError('wechat_worker_protocol')
+                        current['cookies'] = [c for c in current['cookies'] if not
+                            (c['name'] == 'SESSION' and c['domain'].lstrip('.') == 'jzsz.uestc.edu.cn')]
+                        current['cookies'].append({'name':'SESSION','value':paired_session,
+                            'domain':'jzsz.uestc.edu.cn','path':'/','expires':-1,'secure':True,'httpOnly':True})
+                        current['saved_at'] = time.time()
                         current.update(operation_ticket=event['ticket'], operation_ticket_source='wechat-companion',
                                        operation_ticket_expires_at=time.time() + 300)
                         self.store.save_session(current)
@@ -180,6 +189,12 @@ class WeChatAuthorization:
             if proc.wait(timeout=5) != 0 or not complete:
                 raise ToolError('wechat_worker_incomplete')
             return self.store.session()
+        except ToolError as error:
+            with self.lock:
+                self.state = {'state':'error','reason':error.reason,
+                              'message':ERRORS.get(error.reason,'授权未完成；本次未提交签到。')}
+                if error.api_code is not None:self.state['apiCode']=error.api_code
+            raise
         finally:
             timer.cancel()
             if proc.poll() is None:

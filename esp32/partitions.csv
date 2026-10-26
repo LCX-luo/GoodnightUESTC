@@ -1,4 +1,4 @@
-# Preserve the AC project's existing NVS and PHY offsets.
+# Example layout; verify offsets and back up your target board before flashing.
 # Name, Type, SubType, Offset, Size
 nvs,data,nvs,0x9000,0x6000
 phy_init,data,phy,0xf000,0x1000

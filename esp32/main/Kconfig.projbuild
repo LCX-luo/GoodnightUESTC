@@ -1,0 +1,23 @@
+menu "Goodnight local configuration"
+config GN_WIFI_SSID
+    string "Wi-Fi SSID"
+    default ""
+config GN_WIFI_PASSWORD
+    string "Wi-Fi password (local only)"
+    default ""
+config GN_MQTT_URI
+    string "MQTT URI (mqtt:// or mqtts://)"
+    default ""
+config GN_TOPIC_PREFIX
+    string "Topic prefix"
+    default "goodnight"
+config GN_DEVICE_ID
+    string "Device identifier"
+    default ""
+config GN_ENCRYPTION_KEY
+    string "AES-256 key: 64 hex characters (local only)"
+    default ""
+config GN_SIGNING_KEY
+    string "HMAC-SHA256 key: 64 hex characters (local only)"
+    default ""
+endmenu

@@ -10,6 +10,7 @@
 
 | 文件 | 用途 |
 | --- | --- |
+| `android/SecureManagementCodec.kt` | 独立工程的 AES-GCM / HMAC-SHA256 消息编解码，密钥从本地配置注入 |
 | `android/CheckinProtocol.kt` | 180 字节以内的命令、账号绑定、完整包分片与 SHA-256 |
 | `android/CheckinRepository.kt` | 账号列表、CRUD、传输确认、结果状态机、超时与序列号校准反馈 |
 | `android/CheckinScreen.kt` | Compose 管理页面，起止时段及手动单次提交 |
@@ -86,3 +87,15 @@ val repository = CheckinRepository(
 2026-10-26，私人测试工程的手机授权更新、设备接收完整资料、板上取码/取票和单次提交已实测。学校在时段外返回4006“当前不在打卡时间段内”，前后PENDING；随机票据对照返回46002“小程序授权已过期，请重新进入打卡应用”，前后PENDING，均无新增签到。
 
 已做禁用合成账号的真实 USB/加密 MQTT 全套 CRUD 与分片测试；手机管理逻辑13项模拟测试通过。这里抽出的通用参考源码没有独立宿主工程，Agent 仍须在接入项目中编译、检查原有功能并实测。时段内新建签到、真实自动执行及跨日仍待验证。
+
+## 完整独立固件的传输格式
+
+仓库 `esp32/main` 是独立宿主，使用 `SecureManagementCodec.kt`，不依赖任何使用者原项目。
+
+- AES 密钥与 HMAC 密钥分别为本地生成的32字节；命令 AAD 为 `goodnight-management-command-v1`，事件 AAD 为 `goodnight-management-status-v1`。
+- 命令明文 `{seq,body,sig}`，`body` 是 `CI:` 加紧凑 JSON，`sig=HMAC-SHA256(signingKey, UTF8(seq+":"+body))`，小写hex。再以随机12字节 nonce 做 AES-GCM，16字节tag；外层 `{v:1,type:"command",data:base64(nonce+ciphertext+tag)}`。
+- 事件解密后 `{kind,payload}`，外层 type 必须等于内部 kind；ack 的 payload 含 `seq_ok/next_seq`，ci 的 payload 交给 Repository。
+- 设备在执行前把下一序列号写入 NVS，重启不归零；客户端序列号不同步先按有效 ACK 校准，再由本人重新发起操作，不能自动重发签到。
+- 本地生成的 `phone-management.local.json` 包含密钥，只能私下配置到本人手机，不加入仓库或聊天。
+
+这个独立传输层完成真实 ESP-IDF 编译，但与手机的独立宿主硬件联调仍需执行；不要把此前其他宿主的真机成功当成它已经上板通过。

@@ -11,7 +11,7 @@ from core import ROOT, DATA_ROOT, LocalStore, ToolError, offline_test, online_te
 from browser_login import BrowserLogin
 from checkin import Attempts, prepare_checkin, submit_checkin
 from progress import Progress
-from wechat_auth import WeChatAuthorization
+from wechat_auth import WeChatAuthorization, ERRORS as AUTH_ERRORS
 
 MESSAGES = {
     'write_blocked': '测试模式已拦截学校写入请求。',
@@ -90,7 +90,7 @@ def create_app(data_dir=None, *, profiles_enabled=True):
 
     @app.errorhandler(ToolError)
     def school_error(error):
-        return jsonify(error=MESSAGES.get(error.reason, '检查未通过：' + error.reason),
+        return jsonify(error=MESSAGES.get(error.reason, AUTH_ERRORS.get(error.reason, '检查未通过：' + error.reason)),
                        reason=error.reason, stage=error.stage, submitted=False), 400
 
     @app.errorhandler(Exception)

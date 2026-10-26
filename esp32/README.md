@@ -1,10 +1,52 @@
-# ESP32 关键组件与 Agent 部署指引
+# ESP32 独立工程与部署教程
 
 [手机管理关键代码、Agent 接入教程与踩坑](phone-companion/README.md)
 
-此目录提供实验性的 ESP-IDF 组件、分区示例和 USB 配置工具，供熟悉 ESP32 或使用 AI agent 的读者自行集成。**不提供通用固件，也不能据此认定设备端全链路已可用。** 完整原生取票、真实提交、跨日运行和目标开发板的资源稳定性仍需逐项验证。
+此目录现在是可单独构建的 ESP-IDF 工程，包括 Wi-Fi、校时、MQTT 管理、加密认证、账号 NVS、原生取票与签到调度；也可以只复用核心组件。经典 ESP32 / 4 MB / ESP-IDF 5.1.2 已编译通过。**独立宿主尚未在实物上单独部署；此前取票与时段外提交证据来自同一核心组件的实际集成。** 不分发含使用者配置的固件。
 
 只用于本人或明确授权的账号，并遵守学校规定。配置中的地点应为本人实际位置；保存坐标本身不能证明每天人员实际在场。
+
+## 从零构建独立版本
+
+在 ESP-IDF 5.1.2 终端中操作。Windows 建议克隆到纯英文短路径，例如 `C:\Projects\GoodnightUESTC`。先识别芯片、确认至少4 MB Flash，并完整备份目标板；不要直接覆盖已有固件或套用不匹配的分区表。
+
+```sh
+git clone https://github.com/LCX-luo/GoodnightUESTC.git
+cd GoodnightUESTC/esp32
+python configure.py
+idf.py set-target esp32
+idf.py build
+# 确认备份、分区、型号及串口后才刷写；COMx 换成实际串口
+idf.py -p COMx flash monitor
+```
+
+`configure.py` 交互输入 Wi-Fi 和自己的 MQTT URI，随机生成独立设备 ID、AES-256 与 HMAC-SHA256 密钥。它只写本地 `sdkconfig.defaults.local` 和 `phone-management.local.json`，不联网。这两个文件和构建后的 `sdkconfig` 都被 Git 忽略。Wi-Fi 密码不通过命令行参数输入。已有配置不会覆盖；后续修改用 `idf.py menuconfig`。默认配置没有任何真实网络或账号。
+
+当前配置向导支持不需要 MQTT 用户名密码的 `mqtt://` / `mqtts://` 服务；需要 broker 登录或客户端证书时由 Agent 按实际服务扩展配置与验证，不把凭据写回公开源码。TLS 使用证书包验证，不关闭证书校验。
+
+手机管理：按照 [伴随端教程](phone-companion/README.md) 接入 `SecureManagementCodec.kt`，导入本地生成的设备配置，并订阅 `<prefix>/<deviceId>/status`、发布到 `<prefix>/<deviceId>/cmd`。独立工程使用新的通用 AAD 与 HMAC 协议，不能把不匹配的既有传输实现直接当成兼容；业务 Repository 和界面可以复用。状态区分 ACK、accepted、progress、done，只有 `account_saved` 表示账号已持久化。
+
+网页账号库导入：先按网页版流程完成学校登录、微信授权和位置保存，然后在仓库根目录的 Python 环境运行：
+
+```sh
+python esp32/provision.py --port COMx import
+python esp32/provision.py --port COMx status
+python esp32/provision.py --port COMx batch
+```
+
+默认自动总开关关闭。`batch` 只验证授权，不提交；`--submit-once` 才是正式写操作，需本人确认账号和实际位置。也可使用手机新增、更新或删除板上账号。核对原生自检、联网、校时、账号及只读取票后再启用自动计划。
+
+配置后的固件包含本机网络和管理密钥，不上传 GitHub。NVS 默认明文，物理读取可恢复授权；本项目不代替硬件安全启动、Flash 加密或生产环境权限设计。
+
+## 独立宿主文件
+
+| 文件 | 用途 |
+| --- | --- |
+| `CMakeLists.txt` / `main/CMakeLists.txt` | 可直接由 idf.py 构建的完整工程入口 |
+| `main/main.c` | 联网、连接管理、消息分片与命令分派 |
+| `main/secure_channel.c` | AES-GCM、HMAC-SHA256 和跨重启持久序列号 |
+| `main/Kconfig.projbuild` | 本地网络、设备标识与密钥配置 |
+| `configure.py` / `sdkconfig.defaults` | 配置向导和无秘密的编译默认项 |
 
 ## 组件做什么
 
