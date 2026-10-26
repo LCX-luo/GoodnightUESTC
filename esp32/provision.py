@@ -115,7 +115,7 @@ def main():
                 value = json.loads(line[4:])
             except ValueError:
                 continue
-            allowed = {key: value[key] for key in ('state', 'account', 'code', 'heap', 'largestBlock', 'epoch', 'stackFree', 'recordStatus') if key in value}
+            allowed = {key: value[key] for key in ('state', 'account', 'code', 'heap', 'largestBlock', 'epoch', 'stackFree', 'recordStatus', 'msg') if key in value}
             print(json.dumps(allowed), flush=True)
             state = value.get('state', '')
             if args.operation == 'batch':

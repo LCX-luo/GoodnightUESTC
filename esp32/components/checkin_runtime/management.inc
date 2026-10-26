@@ -31,14 +31,16 @@ void save_outcome(const std::string& sid){
     Outcome result;{std::lock_guard<std::mutex> lock(outcome_lock);if(outcome_account!=sid)return;result=current_outcome;}
     Json value=outcome_json(result);std::string raw=dump(value.get());
     std::lock_guard<std::mutex> lock(storage);nvs_handle_t handle;if(nvs_open_from_partition("checkin","results",NVS_READWRITE,&handle)!=ESP_OK)return;
-    if(nvs_set_str(handle,account_key(sid).c_str(),raw.c_str())==ESP_OK)nvs_commit(handle);nvs_close(handle);
+    if(nvs_set_str(handle,account_key(sid).c_str(),raw.c_str())==ESP_OK){nvs_commit(handle);}
+    nvs_close(handle);
 }
 Json read_outcome(const std::string& sid){
     {std::lock_guard<std::mutex> lock(outcome_lock);if(outcome_account==sid&&!current_outcome.state.empty())return outcome_json(current_outcome);}
     std::lock_guard<std::mutex> lock(storage);nvs_handle_t handle;if(nvs_open_from_partition("checkin","results",NVS_READONLY,&handle)!=ESP_OK)return Json(cJSON_CreateObject());
     size_t n=0;std::string raw;auto key=account_key(sid);auto result=nvs_get_str(handle,key.c_str(),nullptr,&n);
     if(result==ESP_OK&&n>0&&n<1024){raw.resize(n);result=nvs_get_str(handle,key.c_str(),raw.data(),&n);}nvs_close(handle);
-    if(result!=ESP_OK||raw.empty())return Json(cJSON_CreateObject());raw.resize(strlen(raw.c_str()));return json(raw);
+    if(result!=ESP_OK||raw.empty()){return Json(cJSON_CreateObject());}
+    raw.resize(strlen(raw.c_str()));return json(raw);
 }
 void begin_outcome(const std::string& sid){std::lock_guard<std::mutex> lock(outcome_lock);outcome_account=sid;current_outcome=Outcome{};current_outcome.at=time(nullptr);}
 void outcome_error(const std::string& sid,const Error& error){
@@ -53,7 +55,7 @@ void send_management(const Job& job,const char *phase,bool ok,int code,const std
     std::string raw=dump(response.get());
     if(raw.size()>450){cJSON_DeleteItemFromObject(response.get(),"msg");auto last=cJSON_GetObjectItem(response.get(),"last");if(last)cJSON_DeleteItemFromObject(last,"msg");raw=dump(response.get());}
     if(raw.size()>450){cJSON_Delete(response.release());response.reset(cJSON_CreateObject());cJSON_AddStringToObject(response.get(),"id",job.request);cJSON_AddStringToObject(response.get(),"op",job.operation);cJSON_AddStringToObject(response.get(),"phase","done");cJSON_AddBoolToObject(response.get(),"ok",false);cJSON_AddStringToObject(response.get(),"state","response_too_large");raw=dump(response.get());}
-    checkin_service_listener callback;void *user;{std::lock_guard<std::mutex> lock(management_lock);callback=management_listener;user=management_user;}if(callback)callback(raw.c_str(),user);
+    checkin_service_listener callback;void *user;{std::lock_guard<std::mutex> lock(management_lock);callback=management_listener;user=management_user;}printf("GN2 %s\n",raw.c_str());fflush(stdout);if(callback)callback(raw.c_str(),user);
 }
 void management_event(const char *state,const std::string& account,int code,const std::string& record,const std::string& message){
     bool save=false;
@@ -82,6 +84,7 @@ int plan_fields(const cJSON*,const cJSON*);
 cJSON *resolve_account(cJSON*,int,const std::string& expected="");
 bool account_enabled(const cJSON*);
 int account_minute(const cJSON*,const cJSON*);
+int account_end(const cJSON*,const cJSON*);
 void expire_transfer();
 void handle_transfer(const Job&,const cJSON*);
 void mutate_account(const Job&,const cJSON*);
@@ -101,7 +104,7 @@ bool dispatch_management(const char *request){
         }
         if(op=="status"||op=="list"){
             Json config=json(read_config());if(op=="status"){management_status(job,config.get());return true;}
-            auto account=resolve_account(config.get(),job.index);auto point=cJSON_GetObjectItem(account,"location");std::string sid=str(account,"student_id");Json extra(cJSON_CreateObject());cJSON_AddNumberToObject(extra.get(),"a",job.index);cJSON_AddStringToObject(extra.get(),"sid",sid.c_str());cJSON_AddNumberToObject(extra.get(),"lat",cJSON_GetObjectItem(point,"latitude")->valuedouble);cJSON_AddNumberToObject(extra.get(),"lng",cJSON_GetObjectItem(point,"longitude")->valuedouble);cJSON_AddBoolToObject(extra.get(),"autoEnabled",account_enabled(account));int minute=account_minute(account,config.get());cJSON_AddNumberToObject(extra.get(),"hour",minute/60);cJSON_AddNumberToObject(extra.get(),"minute",minute%60);Json last=read_outcome(sid);cJSON_AddItemToObject(extra.get(),"last",last.release());send_management(job,"done",true,0,"account",extra.get());return true;
+            auto account=resolve_account(config.get(),job.index);auto point=cJSON_GetObjectItem(account,"location");std::string sid=str(account,"student_id");Json extra(cJSON_CreateObject());cJSON_AddNumberToObject(extra.get(),"a",job.index);cJSON_AddStringToObject(extra.get(),"sid",sid.c_str());cJSON_AddNumberToObject(extra.get(),"lat",cJSON_GetObjectItem(point,"latitude")->valuedouble);cJSON_AddNumberToObject(extra.get(),"lng",cJSON_GetObjectItem(point,"longitude")->valuedouble);cJSON_AddBoolToObject(extra.get(),"autoEnabled",account_enabled(account));int minute=account_minute(account,config.get());cJSON_AddNumberToObject(extra.get(),"hour",minute/60);cJSON_AddNumberToObject(extra.get(),"minute",minute%60);cJSON_AddNumberToObject(extra.get(),"end",account_end(account,config.get()));Json last=read_outcome(sid);cJSON_AddItemToObject(extra.get(),"last",last.release());send_management(job,"done",true,0,"account",extra.get());return true;
         }
         if(op=="edit"||op=="delete"){
             std::unique_lock<std::mutex> guard(execution,std::try_to_lock);need(guard.owns_lock(),"operation_busy");mutate_account(job,value.get());return true;
@@ -148,6 +151,11 @@ void expire_transfer(){std::lock_guard<std::mutex> lock(upload_lock);if(!upload.
 int plan_fields(const cJSON *hour,const cJSON *minute){need(cJSON_IsNumber(hour)&&cJSON_IsNumber(minute)&&hour->valuedouble==hour->valueint&&minute->valuedouble==minute->valueint&&hour->valueint>=0&&hour->valueint<24&&minute->valueint>=0&&minute->valueint<60,"schedule_invalid");return hour->valueint*60+minute->valueint;}
 bool account_enabled(const cJSON *account){auto enabled=cJSON_GetObjectItem(account,"enabled");return !enabled||cJSON_IsTrue(enabled);}
 int account_minute(const cJSON *account,const cJSON *config){auto minute=cJSON_GetObjectItem(account,"scheduleMinute");if(!minute)return schedule_minute(config);need(cJSON_IsNumber(minute)&&minute->valuedouble==minute->valueint&&minute->valueint>=0&&minute->valueint<1440,"schedule_invalid");return minute->valueint;}
+int account_end(const cJSON *account,const cJSON *config){
+    int start=account_minute(account,config);auto end=cJSON_GetObjectItem(account,"scheduleEndMinute");
+    if(!end)return std::min(1440,start+5);
+    need(cJSON_IsNumber(end)&&end->valuedouble==end->valueint&&end->valueint>start&&end->valueint<=1440,"schedule_window_invalid");return end->valueint;
+}
 cJSON *resolve_account(cJSON *config,int index,const std::string& expected){auto account=cJSON_GetArrayItem(cJSON_GetObjectItem(config,"accounts"),index);need(account,"account_not_found");if(!expected.empty())need(str(account,"student_id")==expected,"account_changed");return account;}
 void set_field(cJSON *object,const char *key,cJSON *value){if(cJSON_GetObjectItem(object,key))cJSON_ReplaceItemInObject(object,key,value);else cJSON_AddItemToObject(object,key,value);}
 void require_fields(const cJSON *object,const std::set<std::string>& allowed){need(cJSON_IsObject(object),"account_package_invalid");const cJSON *item;cJSON_ArrayForEach(item,object)need(item->string&&allowed.count(item->string),"account_field_invalid");}
@@ -170,9 +178,11 @@ void mutate_account(const Job& job,const cJSON *request){
         {std::lock_guard<std::mutex> lock(upload_lock);if(upload.sid==sid)clear_upload();}
         Json extra(cJSON_CreateObject());cJSON_AddStringToObject(extra.get(),"sid",sid.c_str());send_management(job,"done",true,0,"account_deleted",extra.get());return;
     }
-    require_fields(request,{"id","op","a","sid","enabled","hour","minute","lat","lng"});
+    require_fields(request,{"id","op","a","sid","enabled","hour","minute","end","lat","lng"});
     bool changed=false;auto enabled=cJSON_GetObjectItem(request,"enabled");if(enabled){need(cJSON_IsBool(enabled),"enabled_invalid");set_field(account,"enabled",cJSON_CreateBool(cJSON_IsTrue(enabled)));changed=true;}
     auto hour=cJSON_GetObjectItem(request,"hour"),minute=cJSON_GetObjectItem(request,"minute");if(hour||minute){set_field(account,"scheduleMinute",cJSON_CreateNumber(plan_fields(hour,minute)));changed=true;}
+    auto end=cJSON_GetObjectItem(request,"end");if(end){need(cJSON_IsNumber(end)&&end->valuedouble==end->valueint,"schedule_window_invalid");set_field(account,"scheduleEndMinute",cJSON_CreateNumber(end->valueint));changed=true;}
+    if(hour||minute||end){account_end(account,config.get());}
     auto lat=cJSON_GetObjectItem(request,"lat"),lng=cJSON_GetObjectItem(request,"lng");if(lat||lng){need(cJSON_IsNumber(lat)&&cJSON_IsNumber(lng),"location_invalid");check_location(lat->valuedouble,lng->valuedouble);auto point=cJSON_GetObjectItem(account,"location");set_field(point,"latitude",cJSON_CreateNumber(lat->valuedouble));set_field(point,"longitude",cJSON_CreateNumber(lng->valuedouble));changed=true;}
     need(changed,"empty_update");claim_management_request(job.request);write_config_sensitive(config.get());Json extra(cJSON_CreateObject());cJSON_AddNumberToObject(extra.get(),"a",job.index);cJSON_AddStringToObject(extra.get(),"sid",sid.c_str());send_management(job,"done",true,0,"account_updated",extra.get());
 }
@@ -199,8 +209,14 @@ void handle_transfer(const Job& job,const cJSON *request){
         SensitiveJson package(cJSON_ParseWithLength((const char*)upload.data.data(),upload.data.size()));need(package.value.get(),"account_package_invalid");validate_package(package.value.get(),upload.sid);
         Json config=json(read_config());auto accounts=cJSON_GetObjectItem(config.get(),"accounts");need(cJSON_IsArray(accounts),"account_config_invalid");int selected=upload.index;
         if(selected<0){need(cJSON_GetArraySize(accounts)<4,"account_limit");cJSON *existing;cJSON_ArrayForEach(existing,accounts)need(str(existing,"student_id")!=upload.sid,"account_exists");selected=cJSON_GetArraySize(accounts);set_field(package.value.get(),"enabled",cJSON_CreateBool(false));}
-        else resolve_account(config.get(),selected,upload.sid);
-        if(!cJSON_GetObjectItem(package.value.get(),"enabled"))set_field(package.value.get(),"enabled",cJSON_CreateBool(false));if(!cJSON_GetObjectItem(package.value.get(),"scheduleMinute"))set_field(package.value.get(),"scheduleMinute",cJSON_CreateNumber(1270));
+        else{
+            auto previous=resolve_account(config.get(),selected,upload.sid);
+            for(auto key:{"enabled","scheduleMinute","scheduleEndMinute"}){
+                auto field=cJSON_GetObjectItem(previous,key);if(field)set_field(package.value.get(),key,cJSON_Duplicate(field,true));
+            }
+        }
+        if(!cJSON_GetObjectItem(package.value.get(),"enabled")){set_field(package.value.get(),"enabled",cJSON_CreateBool(false));}
+        if(!cJSON_GetObjectItem(package.value.get(),"scheduleMinute")){set_field(package.value.get(),"scheduleMinute",cJSON_CreateNumber(1270));}
         auto replacement=cJSON_Duplicate(package.value.get(),true);need(replacement,"account_package_invalid");if(upload.index<0)cJSON_AddItemToArray(accounts,replacement);else cJSON_ReplaceItemInArray(accounts,selected,replacement);
         std::set<std::string> identities;cJSON *item;cJSON_ArrayForEach(item,accounts)need(identities.insert(str(item,"student_id")).second,"duplicate_account");
         claim_management_request(job.request);write_config_sensitive(config.get());Json extra(cJSON_CreateObject());cJSON_AddNumberToObject(extra.get(),"a",selected);cJSON_AddStringToObject(extra.get(),"sid",upload.sid.c_str());clear_upload();send_management(job,"done",true,0,"account_saved",extra.get());

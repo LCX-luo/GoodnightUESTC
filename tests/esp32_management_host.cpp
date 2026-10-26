@@ -66,8 +66,9 @@ void begin_outcome(const std::string&);
 void event(const char *state,const std::string& sid="",int code=0,const std::string& record="",const std::string& message=""){management_event(state,sid,code,record,message);}
 Json school(const char*,const std::string&,const std::string&){return json(R"({"data":{"recordStatusCode":"PENDING"}})");}
 std::string status(const Json& v){return str(cJSON_GetObjectItem(v.get(),"data"),"recordStatusCode");}
-void run_account(cJSON *account,Json&,bool submit,bool){auto sid=str(account,"student_id");begin_outcome(sid);event("record_before",sid,0,"PENDING");if(submit){++fake_posts;event("request_rejected",sid,4006,"","Outside the school window");event("record_after",sid,0,"PENDING");event("submission_rejected",sid,4006);}else event("authorization_verified",sid);}
+void run_account(cJSON *account,Json&,bool submit,bool,bool automatic_attempt=false){(void)automatic_attempt;auto sid=str(account,"student_id");begin_outcome(sid);event("record_before",sid,0,"PENDING");if(submit){++fake_posts;event("request_rejected",sid,4006,"","Outside the school window");event("record_after",sid,0,"PENDING");event("submission_rejected",sid,4006);}else event("authorization_verified",sid);}
 #include "management.inc"
+#include "automation.inc"
 void refresh(cJSON*,bool force=false){assert(force);++refreshes;trace.push_back("refresh");}
 std::string get_buffer(cJSON*){trace.push_back("get");assert(!buffer_codes.empty());int code=buffer_codes.front();buffer_codes.pop_front();if(code)throw Error("oauth_rejected",code,"safe public diagnostic");return "synthetic-buffer";}
 #include "get_buffer_refresh.inc"
@@ -116,5 +117,17 @@ int main(){
  trace.clear();refreshes=0;buffer_codes={-101,0};expect(get_buffer_refresh(account,config)=="synthetic-buffer","mid-TTL buffer recovery");expect(refreshes==1&&trace==std::vector<std::string>({"get","refresh","persist","get"}),"rotate persisted before single buffer retry");
  trace.clear();refreshes=0;buffer_codes={-109};try{get_buffer_refresh(account,config);expect(false,"-109 must fail");}catch(const Error& error){expect(error.code==-109&&refreshes==0,"other errors never trigger refresh");}
  trace.clear();refreshes=0;buffer_codes={-101,-101};try{get_buffer_refresh(account,config);expect(false,"second rejection must fail");}catch(const Error& error){expect(error.code==-101&&refreshes==1&&buffer_codes.empty(),"no refresh loop");}
+ auto safe_failure=json(R"({"state":"submission_rejected","code":4006,"after":"PENDING","msg":"当前不在打卡时间段内"})");
+ expect(automatic_retryable(safe_failure.get()),"explicit outside-window rejection may retry with fresh ticket");
+ auto uncertain=json(R"({"state":"result_unknown_no_retry","code":0,"after":"PENDING","msg":""})");expect(!automatic_retryable(uncertain.get()),"unknown write cannot retry");
+ auto accepted=json(R"({"state":"accepted_pending","code":0,"after":"PENDING","msg":""})");expect(!automatic_retryable(accepted.get()),"accepted but unconfirmed write cannot retry");
+ auto auth_bad=json(R"({"state":"oauth_rejected","code":-109,"after":"","msg":"RC_PARAMS_INVALID"})");expect(!automatic_retryable(auth_bad.get()),"invalid authorization stops daily plan");
+ AutoState attempt{day(),time(nullptr)+60,true};save_auto("202300000001",attempt);auto reboot=read_auto("202300000001");
+ expect(!automatic_due(reboot,day(),time(nullptr)+3600),"power loss preserves uncertain-attempt stop");
+ expect(automatic_due(reboot,"2026-10-26",time(nullptr)),"next business day can run again");
+ attempt.stopped=false;save_auto("202300000001",attempt);expect(!automatic_due(read_auto("202300000001"),day(),time(nullptr)),"60-second retry spacing persists across restart");
+ expect(automatic_due(read_auto("202300000001"),day(),time(nullptr)+61),"safe retry becomes due after interval");
+ auto plan=json(R"({"scheduleMinute":1270,"scheduleEndMinute":1275})");expect(account_end(plan.get(),config.get())==1275,"per-account end window read");
+ try{auto bad=json(R"({"scheduleMinute":1270,"scheduleEndMinute":1269})");account_end(bad.get(),config.get());expect(false,"bad end accepted");}catch(const Error&){}
  std::cout<<"PASS: host management invariants; all storage, crypto, school, Wi-Fi and queues mocked; no network/device writes.\n";
 }
