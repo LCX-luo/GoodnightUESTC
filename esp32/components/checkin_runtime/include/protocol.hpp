@@ -8,7 +8,7 @@
 #include "cJSON.h"
 namespace wc {
 using B=std::vector<uint8_t>;
-struct Error:std::runtime_error { int code; explicit Error(const char *stage,int business=0):std::runtime_error(stage),code(business){} };
+struct Error:std::runtime_error { int code; std::string school_message; explicit Error(const char *stage,int business=0,const std::string& message=""):std::runtime_error(stage),code(business),school_message(message){} };
 inline void need(bool yes,const char *stage) { if(!yes) throw Error(stage); }
 B bytes(const std::string &s); B hex(const char *s); B slice(const B& b,size_t start,size_t end);
 B join(std::initializer_list<B> values); B be(uint64_t value,size_t n);

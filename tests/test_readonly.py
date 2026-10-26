@@ -169,8 +169,7 @@ class LoginTests(unittest.TestCase):
             from unittest.mock import MagicMock
             store = LocalStore(directory)
             manager = BrowserLogin(store)
-            browser = playwright.return_value.__enter__.return_value.chromium.launch.return_value
-            context = browser.new_context.return_value
+            context = playwright.return_value.__enter__.return_value.chromium.launch_persistent_context.return_value
             context.cookies.return_value = SNAPSHOT['cookies']
             page = context.new_page.return_value
             page.url = 'https://jzsz.uestc.edu.cn/'
@@ -182,13 +181,32 @@ class LoginTests(unittest.TestCase):
             self.assertEqual(manager.status()['state'], 'success')
             self.assertEqual(store.session()['cookies'], SNAPSHOT['cookies'])
             self.assertNotIn('password', store.session())
-            browser.close.assert_called_once()
+            context.close.assert_called_once()
+
+    def test_browser_uses_private_profile_and_artifacts_without_changing_process_temp(self):
+        import os
+        with tempfile.TemporaryDirectory() as directory, patch('playwright.sync_api.sync_playwright') as playwright, patch('browser_login.NETWORK.browser_options', return_value={}):
+            store = LocalStore(directory); manager = BrowserLogin(store)
+            launch = playwright.return_value.__enter__.return_value.chromium.launch_persistent_context
+            launch.side_effect = PermissionError('sensitive-path-or-url-must-not-be-returned')
+            original = (os.environ.get('TEMP'), os.environ.get('TMP'))
+            manager.run(SNAPSHOT['student_id'], 'synthetic-password')
+            call = launch.call_args
+            profile = Path(call.args[0]); artifacts = Path(call.kwargs['artifacts_dir'])
+            self.assertEqual(profile.parent, artifacts.parent)
+            self.assertTrue(profile.is_relative_to(Path(directory)))
+            self.assertEqual(call.kwargs['env']['TEMP'], str(profile.parent))
+            self.assertEqual(call.kwargs['env']['TMP'], str(profile.parent))
+            self.assertEqual(original, (os.environ.get('TEMP'), os.environ.get('TMP')))
+            self.assertEqual(manager.status()['reason'], 'browser_temp_permission')
+            self.assertNotIn('sensitive', str(manager.status()))
+            self.assertIsNone(store.session())
 
     def test_cancel_during_verification_does_not_save_session(self):
         with tempfile.TemporaryDirectory() as directory, patch('playwright.sync_api.sync_playwright') as playwright, patch('browser_login.NETWORK.browser_options', return_value={}):
             store = LocalStore(directory)
             manager = BrowserLogin(store)
-            context = playwright.return_value.__enter__.return_value.chromium.launch.return_value.new_context.return_value
+            context = playwright.return_value.__enter__.return_value.chromium.launch_persistent_context.return_value
             context.cookies.return_value = SNAPSHOT['cookies']
             context.new_page.return_value.is_closed.return_value = False
             context.new_page.return_value.url = 'https://jzsz.uestc.edu.cn/'

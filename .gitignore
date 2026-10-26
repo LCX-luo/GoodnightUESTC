@@ -19,3 +19,6 @@ android/local.properties
 
 downloads/web-portable-*/
 *.zip.sha256
+
+/goodnight-esp32-*/
+/tmp*idf_*
