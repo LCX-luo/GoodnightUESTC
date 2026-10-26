@@ -5,7 +5,12 @@
 <header><a class="brand" href="/">☾ <span>晚安成电<small>LOCAL WORKSPACE</small></span></a><span class="mode"><i></i> 手动签到 · 本机运行</span></header>
 <main>
 <section class="intro"><div><p class="eyebrow">你的账号，你的本机工作台</p><h1>选择位置，确认签到。</h1><p class="lede">登录学校账号，在地图选择实际位置，完成今天的晚安签到。</p></div><div class="safety"><span>每一次签到</span><strong>由你确认 <span>↗</span></strong><small>提交后回读学校记录核对结果</small></div></section>
-<p class="help"><a href="/accounts">管理多个账号的登录与微信授权 →</a></p>
+<section class="card account-workspace" aria-label="账号选择与保存">
+<div class="section-title"><div><h2>账号工作台</h2><p>选择账号后，下面的登录、授权、位置、查询和签到都属于该账号。</p></div></div>
+<label for="saved-account">已保存账号 / 草稿</label><select id="saved-account"><option value="">临时账号（尚未选择账号库）</option></select>
+<label for="account-name">账号备注</label><input id="account-name" maxlength="80" placeholder="例如：本人账号">
+<div class="small-actions"><button id="new-account" type="button" class="button secondary">新建账号</button><button id="save-account" type="button" class="button primary">保存 / 更新到账号库</button><button id="reload-accounts" type="button" class="text-button">刷新账号列表</button></div>
+<p id="library-message" class="help" role="status">重新登录、微信授权和保存位置会直接更新所选账号；新草稿需最后保存入库。</p></section>
 <div class="workspace">
 <section class="card account-card"><div class="section-title"><span class="step">01</span><div><h2>学校账号</h2><p>Edge 登录 · Cookie 自动保存</p></div><span id="session-badge" class="badge">未登录</span></div>
 <form id="login-form"><label for="student-id">学号</label><input id="student-id" name="username" inputmode="numeric" autocomplete="username" pattern="[0-9]{8,20}" placeholder="输入学校学号" required><label for="password">统一认证密码</label><div class="password-wrap"><input id="password" type="password" autocomplete="current-password" placeholder="密码仅用于本次登录" required maxlength="256"><button id="show-password" type="button" class="text-button">显示</button></div><button class="button primary full" id="login-button" type="submit">用 Edge 登录并导入 <span>↗</span></button></form>

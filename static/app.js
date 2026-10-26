@@ -1,15 +1,46 @@
 'use strict';
 const $ = id => document.getElementById(id);
+const activeAccount = new URLSearchParams(location.search).get('account') || '';
+let accountLibrary = [], accountAuthBusy = false;
+
 let csrf = '', map, marker, savedLocation = null, loginBusy = false, confirmation = '', submitting = false;
 let refreshInFlight = false;
 const liveProgress=document.createElement('p');liveProgress.id='checkin-progress';liveProgress.className='live-progress';liveProgress.hidden=true;liveProgress.setAttribute('role','status');$('checkin-error').before(liveProgress);
 function toast(message) { $('toast').textContent=message; $('toast').hidden=false; clearTimeout(toast.timer); toast.timer=setTimeout(()=>$('toast').hidden=true,5000); }
 async function api(path, data) {
   const controller=new AbortController();const timeout=setTimeout(()=>controller.abort(),path==='/api/checkin'?240000:path.includes('/test/online')||path.includes('/checkin/prepare')?60000:8000);
-  try{const response=await fetch(path,{signal:controller.signal,method:data===undefined?'GET':'POST',credentials:'same-origin',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},...(data===undefined?{}:{body:JSON.stringify(data)})});
+  try{const response=await fetch(path,{signal:controller.signal,method:data===undefined?'GET':'POST',credentials:'same-origin',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf,...(activeAccount?{'X-Account-ID':activeAccount}:{})},...(data===undefined?{}:{body:JSON.stringify(data)})});
     const result=await response.json(); if(!response.ok)throw new Error(result.error||'操作失败');return result;
   }catch(e){if(e.name==='AbortError')throw new Error(path==='/api/checkin'?'响应超时，签到结果尚不明确，请先核对学校记录，勿重复提交。':'连接等待超时，请检查网络后重试。');throw e;}finally{clearTimeout(timeout);}
 }
+async function libraryApi(path, data) {
+  let rootToken='';
+  if(data!==undefined){const root=await fetch('/api/status',{credentials:'same-origin'});rootToken=(await root.json()).csrf;}
+  const response=await fetch(path,{method:data===undefined?'GET':'POST',credentials:'same-origin',headers:{'Content-Type':'application/json','X-CSRF-Token':rootToken},...(data===undefined?{}:{body:JSON.stringify(data)})});
+  const result=await response.json();if(!response.ok)throw new Error(result.error||'账号操作失败');return result;
+}
+async function loadAccountLibrary(){
+  const result=await libraryApi('/api/accounts');accountLibrary=result.profiles;
+  const select=$('saved-account');select.replaceChildren(new Option('临时账号（尚未选择账号库）',''));
+  for(const p of accountLibrary)select.add(new Option(`${p.student_id||'待登录'} · ${p.name}${p.saved===false?'（草稿）':''}`,p.id));
+  select.value=activeAccount;
+  const chosen=accountLibrary.find(p=>p.id===activeAccount);
+  if(activeAccount&&!chosen)throw new Error('所选账号不存在，请重新选择。');
+  if(chosen)$('account-name').value=chosen.name;
+  $('library-message').textContent=chosen?`${chosen.saved===false?'正在配置新草稿':'正在使用已存账号'}：${chosen.student_id||chosen.name}。下方操作只更新这个账号。`:'可以新建账号，或将当前临时账号完成授权后保存到库。';
+}
+function navigateAccount(id){if(accountAuthBusy||submitting)throw new Error('请先完成或取消当前操作，再切换账号。');location.assign(id?'/?account='+encodeURIComponent(id):'/');}
+$('saved-account').onchange=()=>{try{navigateAccount($('saved-account').value);}catch(e){$('saved-account').value=activeAccount;toast(e.message);}};
+$('reload-accounts').onclick=()=>loadAccountLibrary().catch(e=>toast(e.message));
+$('new-account').onclick=async()=>{try{if(accountAuthBusy||submitting)throw new Error('请先完成或取消当前操作。');const r=await libraryApi('/api/accounts',{name:'新账号'});navigateAccount(r.profile.id);}catch(e){toast(e.message);}};
+$('save-account').onclick=async()=>{try{
+  if(accountAuthBusy||submitting)throw new Error('请先完成当前授权或提交。');
+  if(dirtyLocation())throw new Error('请先保存所选账号的实际位置。');
+  let id=activeAccount;
+  if(!id)id=(await libraryApi('/api/accounts/import-current',{})).profile.id;
+  const r=await libraryApi('/api/accounts/'+id+'/save',{name:$('account-name').value.trim()||$('student-id').value.trim()||'本人账号'});
+  toast('账号资料已保存；没有提交签到。');if(id!==activeAccount)navigateAccount(id);else await loadAccountLibrary();
+}catch(e){toast(e.message);}};
 function inverse(lat,lng){ // Invert the forward GCJ transform for map display only.
   const a=6378245,ee=.00669342162296594323,pi=Math.PI;
   function forward(lat,lng){if(!(73.66<lng&&lng<135.05&&3.86<lat&&lat<53.55))return [lat,lng];const x=lng-105,y=lat-35;
@@ -42,6 +73,12 @@ async function refresh(){
     if(!wx.runtimeReady)$('wechat-message').textContent='微信授权环境未安装，请查看使用说明。';
   }
   const active=['opening','waiting','verifying'].includes(r.login.state);loginBusy=active;
+  accountAuthBusy=active||submitting||Boolean(wx&&wx.active);
+  $('saved-account').disabled=accountAuthBusy;$('new-account').disabled=accountAuthBusy;
+  $('save-account').disabled=accountAuthBusy||!r.account||!r.location||!Boolean(wx&&wx.hasCredentials);
+  if(activeAccount&&r.account&&!$('student-id').value)$('student-id').value=r.account.student_id;
+  $('student-id').readOnly=Boolean(activeAccount&&r.account&&accountLibrary.find(p=>p.id===activeAccount)?.saved!==false);
+
   $('login-button').disabled=active;$('cancel-login').hidden=!active;
   $('login-button').textContent=active?(r.login.state==='verifying'?'正在验证学校会话…':'等待学校登录完成…'):'用 Edge 登录并导入 ↗';
   $('session-badge').textContent=r.account?'已保存':active?'登录中':'未登录';$('session-badge').className='badge'+(r.account?' green':'');
@@ -107,4 +144,4 @@ $('checkin-dialog').addEventListener('cancel',e=>{if(submitting)e.preventDefault
 const campuses={shahe:[30.6752,104.0975],qingshuihe:[30.7528,103.9313]};
 function viewCampus(key){map.setView(campuses[key],16);for(const name of Object.keys(campuses))$('campus-'+name).setAttribute('aria-pressed',String(name===key));}
 try{map=L.map('map',{scrollWheelZoom:true}).setView(campuses.shahe,16);const tiles=L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors'}).addTo(map);let tileErrors=0;tiles.on('tileerror',()=>{if(++tileErrors>2)$('map-tip').textContent='底图暂时不可用，可手动输入坐标';});map.on('click',e=>{$('coordinate-system').value='wgs84';$('latitude').value=e.latlng.lat.toFixed(7);$('longitude').value=e.latlng.lng.toFixed(7);showPoint(e.latlng.lat,e.latlng.lng);$('converted').textContent='已选地图位置，请保存。';});for(const key of Object.keys(campuses))$('campus-'+key).addEventListener('click',()=>viewCampus(key));}catch(e){$('map-tip').textContent='地图未加载，可手动输入经纬度。';}
-refresh().catch(e=>toast(e.message));setInterval(()=>refresh().catch(()=>{}),1000);
+Promise.all([loadAccountLibrary(),refresh()]).catch(e=>toast(e.message));setInterval(()=>refresh().catch(()=>{}),1000);

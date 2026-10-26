@@ -5,7 +5,7 @@ import threading
 import uuid
 import time
 from pathlib import Path
-from flask import jsonify, request, send_from_directory
+from flask import jsonify, request, send_from_directory, redirect
 from werkzeug.wrappers import Response
 from core import LocalStore
 
@@ -46,7 +46,7 @@ def install_accounts(app, store, root, factory):
 
     @app.get('/accounts')
     def accounts_page():
-        return send_from_directory(root / 'static', 'accounts.html')
+        return redirect('/')
 
     @app.get('/api/accounts')
     def account_list():
@@ -125,6 +125,32 @@ def install_accounts(app, store, root, factory):
             temp.replace(index)
             return jsonify(profile=profile, existing=False), 201
 
+    def active_account(profile, action):
+        if not re.fullmatch(r'[a-f0-9]{32}', profile) or action not in ALLOWED | {'checkin', 'checkin/prepare'}:
+            return jsonify(error='不存在的账号或不允许的操作。'), 404
+        with lock:
+            entry = next((item for item in read() if item['id'] == profile), None)
+            if entry is None:
+                return jsonify(error='账号不存在，请重新选择。'), 404
+            if action in {'checkin', 'checkin/prepare'} and entry.get('saved') is False:
+                return jsonify(error='请先完成授权并保存到账号库，再进行签到测试。'), 409
+            if profile not in children:
+                child = factory(directory / profile, profiles_enabled=False)
+                child.config.update(SESSION_COOKIE_NAME='account_' + profile, SESSION_COOKIE_PATH='/')
+                children[profile] = child
+            child = children[profile]
+            if action == 'login':
+                existing = child.extensions['local_store'].session()
+                value = request.get_json(silent=True) or {}
+                if existing and entry.get('saved', True) and value.get('student_id') != existing['student_id']:
+                    return jsonify(error='当前选择的是已保存账号，请更新该账号；其他学号请先新建账号。'), 409
+        environ = dict(request.environ)
+        environ['PATH_INFO'] = '/api/' + action
+        environ['SCRIPT_NAME'] = ''
+        return Response.from_app(child, environ)
+
+    app.extensions['active_account_router'] = active_account
+
     @app.route('/api/accounts/<profile>/<path:action>', methods=['GET', 'POST'])
     def profile_proxy(profile, action):
         if not re.fullmatch(r'[a-f0-9]{32}', profile) or action not in ALLOWED:
@@ -135,7 +161,7 @@ def install_accounts(app, store, root, factory):
             if profile not in children:
                 child = factory(directory / profile, profiles_enabled=False)
                 child.config.update(SESSION_COOKIE_NAME='account_' + profile,
-                                    SESSION_COOKIE_PATH='/api/accounts/' + profile)
+                                    SESSION_COOKIE_PATH='/')
                 children[profile] = child
             child = children[profile]
         environ = dict(request.environ)

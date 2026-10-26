@@ -60,6 +60,12 @@ def create_app(data_dir=None, *, profiles_enabled=True):
     def protect():
         if request.host not in ('127.0.0.1:8090', 'localhost:8090'):
             return jsonify(error='仅允许本机访问。'), 403
+        active_id = request.headers.get('X-Account-ID')
+        if profiles_enabled and active_id:
+            router = app.extensions.get('active_account_router')
+            if not router or not request.path.startswith('/api/'):
+                return jsonify(error='账号上下文无效。'), 404
+            return router(active_id, request.path[5:])
         if request.method not in ('GET', 'HEAD', 'OPTIONS'):
             expected = 'http://' + request.host
             if request.headers.get('Origin') != expected:
