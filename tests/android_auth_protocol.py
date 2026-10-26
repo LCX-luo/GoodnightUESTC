@@ -26,6 +26,28 @@ class PhoneProtocol(unittest.TestCase):
         callback.cancelled.return_value = False
         return client, callback
 
+    def test_network_diagnostics_keep_endpoint_and_nested_dns_without_secrets(self):
+        callback=MagicMock()
+        client=phone.Client(callback)
+        error=phone.urllib.error.URLError(phone.socket.gaierror(-2, 'secret token and private URL'))
+        with patch.object(client.opener,'open',side_effect=error):
+            with self.assertRaises(phone.urllib.error.URLError):
+                client.request('GET',phone.OAUTH+'?secret=must-not-export')
+        logs='\n'.join(c.args[0] for c in callback.diagnostic.call_args_list)
+        self.assertIn('ep=qr_create',logs)
+        self.assertIn('type=gaierror errno=-2',logs)
+        self.assertNotIn('must-not-export',logs)
+        self.assertNotIn('secret token',logs)
+        self.assertNotIn('https://',logs)
+
+    def test_refresh_rejection_logs_only_business_code(self):
+        callback=MagicMock();client=phone.Client(callback)
+        with patch.object(client,'request',return_value=(200,{},b'{"code":-109,"secret":"do-not-export"}')):
+            with self.assertRaisesRegex(RuntimeError,'wechat_credential_rejected'):
+                phone.signed(client,'pcyyb_refresh_token_auth',{})
+        self.assertIn('net_business code=-109',[c.args[0] for c in callback.diagnostic.call_args_list])
+        self.assertNotIn('do-not-export',str(callback.diagnostic.call_args_list))
+
     def test_transient_disconnect_reuses_same_qr_then_authorizes(self):
         client, callback = self.poll([phone.http.client.RemoteDisconnected('sensitive URL must not escape'),
                                      (200, {}, b"window.wx_errcode=405;window.wx_code='synthetic-code';")])

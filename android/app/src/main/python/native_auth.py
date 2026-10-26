@@ -34,7 +34,8 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
 
 
 class Client:
-    def __init__(self):
+    def __init__(self, callback=None):
+        self.callback=callback
         self.cookies = http.cookiejar.CookieJar()
         self.opener = urllib.request.build_opener(
             urllib.request.ProxyHandler({}), NoRedirect(),
@@ -51,15 +52,39 @@ class Client:
             raise RuntimeError('request_blocked')
         request = urllib.request.Request(url, data=body, method=method,
                                         headers={'User-Agent': 'Mozilla/5.0', **(headers or {})})
+        # Fixed endpoint aliases only: never record URLs, queries, bodies or headers.
+        aliases = {'/connect/qrconnect':'qr_create', '/connect/l/qrconnect':'qr_poll',
+                   '/pc_yyb/pcyyb_oauth':'oauth_callback', '/pc_yyb_auth/pcyyb_refresh_token_auth':'credential_refresh',
+                   '/pc_yyb_auth/pcyyb_get_wx_login_buffer_auth':'login_buffer',
+                   '/daily-checkin/api/auth/user-info':'school_identity',
+                   '/platform-app/api/auth/user-info':'mini_identity',
+                   '/platform-app/api/auth/check-bind':'check_bind',
+                   '/platform-app/api/auth/checkin-ticket':'school_ticket'}
+        endpoint='qr_image' if parsed.path.startswith('/connect/qrcode/') else aliases.get(parsed.path,'other')
+        start=time.monotonic()
+        def log(text):
+            if self.callback is not None:self.callback.diagnostic('net_'+text)
+        log('start ep='+endpoint+' route=direct')
         try:
-            response = self.opener.open(request, timeout=timeout)
-        except urllib.error.HTTPError as error:
-            response = error
-        with response:
-            content = response.read(2_000_001)
-            if len(content) > 2_000_000:
-                raise RuntimeError('response_too_large')
-            return response.code, response.headers, content
+            try:
+                response = self.opener.open(request, timeout=timeout)
+            except urllib.error.HTTPError as error:
+                response = error
+            with response:
+                content = response.read(2_000_001)
+                log('result ep='+endpoint+' http='+str(response.code)+' bytes='+str(len(content)))
+                if len(content) > 2_000_000:
+                    raise RuntimeError('response_too_large')
+                return response.code, response.headers, content
+        except Exception as error:
+            root=error.reason if isinstance(error,urllib.error.URLError) else error
+            kind=type(root).__name__.lower()
+            if not re.fullmatch('[a-z0-9_]{1,64}',kind):kind='unknown'
+            number=getattr(root,'errno',None)
+            log('error ep='+endpoint+' type='+kind+(' errno='+str(number) if type(number) is int else ''))
+            raise
+        finally:
+            log('end ep='+endpoint+' ms='+str(int((time.monotonic()-start)*1000)))
 
     def school(self, method, path, session=None, body=None):
         headers = {'platform': 'mp-weixin' if path.startswith('/platform-app/') else 'h5'}
@@ -74,6 +99,9 @@ class Client:
         if status != 200:
             raise RuntimeError('school_http_' + str(status))
         envelope = json.loads(raw)
+        if self.callback is not None:
+            code=envelope.get('code')
+            self.callback.diagnostic('net_business code='+str(code) if type(code) is int else 'net_business code=unknown')
         valid = envelope.get('ok') is True if path.startswith('/platform-app/') else (
             envelope.get('ok') is not False and envelope.get('code') == 0)
         if not valid:
@@ -98,6 +126,9 @@ def signed(client, operation, body, credentials=None):
     if status != 200:
         raise RuntimeError('wechat_http_' + str(status))
     result = json.loads(content)
+    if client.callback is not None:
+        code=result.get('code')
+        client.callback.diagnostic('net_business code='+str(code) if type(code) is int else 'net_business code=unknown')
     if type(result.get('code')) is not int or result['code'] != 0:
         raise RuntimeError('wechat_credential_rejected')
     return result
@@ -109,6 +140,20 @@ def login_buffer(client, credentials):
                   'access_token': {'value': [credentials['access_token']]}},
         'listI': {'user_type': {'value': [0]}}}}, credentials)
     return result['ext_info']['list_s']['login_buffer']['value'][0]
+
+
+def request_code(client, credentials, callback):
+    buffer=login_buffer(client, credentials)
+    start=time.monotonic()
+    callback.diagnostic('net_start ep=mmtls_code')
+    try:
+        return get_code(buffer, 'wxaa78bf2905f01cee', timeout=45)
+    except Exception as error:
+        kind=type(error).__name__.lower()
+        if re.fullmatch('[a-z0-9_]{1,64}',kind):callback.diagnostic('net_error ep=mmtls_code type='+kind)
+        raise
+    finally:
+        callback.diagnostic('net_end ep=mmtls_code ms='+str(int((time.monotonic()-start)*1000)))
 
 
 def cancelled(callback):
@@ -223,12 +268,15 @@ def acquire(session, cache_json, callback, allow_qr):
 
 
 def _acquire(session, cache_json, callback, allow_qr):
-    client = Client()
+    client = Client(callback)
     callback.progress('正在核对学校登录身份…')
     user = client.school('GET', '/daily-checkin/api/auth/user-info', session)['userData']
     credentials = json.loads(cache_json) if cache_json else None
     if credentials and credentials.get('school_user_id') != user['id']:
-        credentials = None
+        if credentials.get('school_user_id') is None and credentials.get('school_username') == user['username']:
+            credentials['school_user_id'] = user['id']
+        else:
+            credentials = None
     if credentials is None:
         if not allow_qr:
             raise RuntimeError('authorization_required')
@@ -247,7 +295,7 @@ def _acquire(session, cache_json, callback, allow_qr):
         oauth_code = wait_for_qr(client, uuid, callback)
         cancelled(callback)
         callback.progress('微信已确认，正在接收授权凭据…')
-        callback_client = Client()
+        callback_client = Client(callback)
         url = CALLBACK + '?' + urllib.parse.urlencode({'login_type': 'WX', 'code': oauth_code, 'state': 'web'})
         for _ in range(6):
             status, headers, _ = callback_client.request('GET', url)
@@ -278,7 +326,7 @@ def _acquire(session, cache_json, callback, allow_qr):
     callback.credentials(json.dumps(credentials))
     cancelled(callback)
     callback.progress('正在申请微信 code 并建立小程序会话…')
-    first = get_code(login_buffer(client, credentials), 'wxaa78bf2905f01cee', timeout=45)
+    first = request_code(client, credentials, callback)
     binding = client.school('POST', '/platform-app/api/auth/check-bind', body={'code': first, 'sn': ''})
     if binding.get('bind') is not True or not binding.get('sessionId'):
         raise RuntimeError('school_not_bound')
@@ -288,7 +336,7 @@ def _acquire(session, cache_json, callback, allow_qr):
         raise RuntimeError('identity_mismatch')
     cancelled(callback)
     callback.progress('账号一致，正在申请本次操作票据…')
-    second = get_code(login_buffer(client, credentials), 'wxaa78bf2905f01cee', timeout=45)
+    second = request_code(client, credentials, callback)
     ticket = client.school('POST', '/platform-app/api/auth/checkin-ticket', mini_session, {'code': second})['ticket']
     if not re.fullmatch(r'[A-Za-z0-9_-]{43}', ticket):
         raise RuntimeError('ticket_invalid')

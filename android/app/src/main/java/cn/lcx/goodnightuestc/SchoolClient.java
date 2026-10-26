@@ -22,6 +22,8 @@ class SchoolClient {
     private long routeAt;
     private final String agent;
     private String operationTicket;
+    private Integer submissionCode;
+    Integer lastSubmissionCode(){return submissionCode;}
     synchronized void setOperationTicket(String ticket) throws IOException {
         if(ticket==null||!ticket.matches("[A-Za-z0-9_-]{43}")) throw new IOException("缺少有效微信操作授权");
         operationTicket=ticket;
@@ -36,7 +38,9 @@ class SchoolClient {
         if(values.size()!=1) throw new IOException("请先登录学校账号，未找到唯一有效学校会话");
         return values.iterator().next();
     }
-    String session() throws IOException { return schoolSession(); }
+    private volatile String importedSession;
+    void setSession(String value){importedSession=value;route=null;operationTicket=null;}
+    String session() throws IOException { return importedSession==null?schoolSession():importedSession; }
     private final ExecutorService probes=Executors.newFixedThreadPool(2);
     SchoolClient(String agent) { this.agent=agent; }
     void close() { probes.shutdownNow(); }
@@ -48,6 +52,9 @@ class SchoolClient {
         if (post ? !POST.equals(base) : !Arrays.asList(TODAY,SCHEDULE,FENCES,REVERSE).contains(base))
             throw new IOException("未允许的接口");
         HttpURLConnection c=(HttpURLConnection)new URL(ORIGIN+"/daily-checkin/api"+path).openConnection(proxy);
+        long started=android.os.SystemClock.elapsedRealtime();
+        String endpoint=post?"submit":base.substring(base.lastIndexOf('/')+1).replace('-','_');
+        DiagnosticLog.add("school_start ep="+endpoint+" route="+proxy.type());
         try {
             c.setConnectTimeout(4500); c.setReadTimeout(post?12000:6500);
             c.setInstanceFollowRedirects(false);
@@ -57,7 +64,7 @@ class SchoolClient {
             c.setRequestProperty("Origin",ORIGIN);
             c.setRequestProperty("Referer",ORIGIN+"/daily-checkin-h5/index.html?appId=294");
             c.setRequestProperty("User-Agent",agent);
-            String cookies=CookieManager.getInstance().getCookie(ORIGIN);
+            String cookies=importedSession==null?CookieManager.getInstance().getCookie(ORIGIN):"SESSION="+importedSession;
             if (cookies!=null) c.setRequestProperty("Cookie",cookies);
             if(post) {
                 if(operationTicket==null) throw new IOException("请先完成微信授权");
@@ -69,6 +76,7 @@ class SchoolClient {
                 try(OutputStream out=c.getOutputStream()) { out.write(bytes); }
             }
             int status=c.getResponseCode();
+            DiagnosticLog.add("school_http ep="+endpoint+" status="+status);
             for(Map.Entry<String,List<String>> entry:c.getHeaderFields().entrySet())
                 if("Set-Cookie".equalsIgnoreCase(entry.getKey()))
                     for(String value:entry.getValue()) CookieManager.getInstance().setCookie(ORIGIN,value);
@@ -82,6 +90,8 @@ class SchoolClient {
             }
             JSONObject envelope;
             try { envelope=new JSONObject(body); } catch(JSONException ex) { throw new IOException("未收到学校 JSON 数据，请重新登录"); }
+            if(post&&envelope.has("code"))submissionCode=envelope.optInt("code",-1);
+            DiagnosticLog.add("school_result ep="+endpoint+" code="+envelope.optInt("code",-1));
             if(!envelope.has("code") || envelope.optInt("code",-1)!=0 || Boolean.FALSE.equals(envelope.opt("ok"))) {
                 // Do not echo upstream messages, which can contain account/session information.
                 String message=envelope.optString("msg",envelope.optString("message",""));
@@ -93,7 +103,8 @@ class SchoolClient {
             if(post) return envelope.opt("data");
             if(envelope.isNull("data")) throw new IOException("学校返回空数据");
             return envelope.get("data");
-        } finally { c.disconnect(); }
+        } catch(Exception e){DiagnosticLog.add("school_error ep="+endpoint+" type="+DiagnosticLog.reason(e));throw e;
+        } finally { DiagnosticLog.add("school_end ep="+endpoint+" ms="+(android.os.SystemClock.elapsedRealtime()-started)); c.disconnect(); }
     }
     private Proxy systemProxy() {
         try {
@@ -125,11 +136,12 @@ class SchoolClient {
         } finally { direct.cancel(true); proxied.cancel(true); }
     }
     synchronized void post(JSONObject payload) throws Exception {
+        submissionCode=null;
         if(route==null) route=systemProxy();
         try { request(POST,payload,route); } finally { operationTicket=null; } // Never retry.
     }
     JSONObject today() throws Exception {
-        JSONObject record=(JSONObject)get(TODAY); validate(record); return record;
+        JSONObject record=(JSONObject)get(TODAY); String status=validate(record); DiagnosticLog.add("today status="+status); return record;
     }
     static String validate(JSONObject r) throws Exception {
         if(!day().equals(r.optString("businessDate"))) throw new IOException("学校业务日期与北京时间不一致");

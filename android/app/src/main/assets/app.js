@@ -16,6 +16,7 @@ let started=0,elapsed;
 function stopTimer(){clearInterval(elapsed);elapsed=null;}
 function begin(){started=Date.now();stopTimer();elapsed=setInterval(()=>{$('timer').textContent=`已用时 ${Math.floor((Date.now()-started)/1000)} 秒`;},500);}
 window.onNative=(kind,value)=>{
+ if(kind==='saveaccount')$('save-account-panel').hidden=value!=='true';
  if(kind==='qr'){ $('qr').src='data:image/png;base64,'+value;$('qr-panel').hidden=false;$('wechat-cancel').hidden=false;$('wxstatus').textContent='请用绑定账号的本人微信摄像头扫码，并在微信确认授权。'; }
  if(kind==='qrhide'){ $('qr-panel').hidden=true;$('qr').removeAttribute('src');$('wechat-cancel').hidden=true; }
  if(kind==='wxstatus')$('wxstatus').textContent=value;
@@ -39,3 +40,8 @@ function prepare(confirm){
 }
 $('dry').onclick=()=>Android.check();
 $('prepare').onclick=()=>prepare(true);
+
+$('copy-logs').onclick=()=>Android.copyLogs();
+$('accounts').onclick=()=>Android.accounts();
+
+$('save-account').onclick=()=>Android.saveAccount();

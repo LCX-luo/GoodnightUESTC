@@ -27,22 +27,7 @@ public class WeChatAuth {
     private volatile String diagnosticPhase="idle";
     private static final String ALIAS="goodnight-wechat-v1";
     WeChatAuth(Context context,Listener listener) { this.context=context.getApplicationContext();this.listener=listener; }
-    /** Bounded private diagnostic trail: only fixed protocol stages and reasons. */
-    private synchronized void diagnostic(String event) {
-        if(!event.matches("(?:phase=[a-z_]+|qr_retry reason=[a-z_0-9]+|authorization_started allowQr=(?:true|false) cached=(?:true|false)|authorization_failed phase=[a-z_]+ reason=[a-z_0-9]+|authorization_ticket_acquired|oauth_credentials_received|authorization_cancelled_explicitly)")) return;
-        android.util.Log.i("GoodnightAuth",event);
-        try {
-            File target=new File(context.getFilesDir(),"auth-diagnostics.log");
-            java.util.List<String> lines=target.exists()&&target.length()<=16384
-                ?new java.util.ArrayList<>(Files.readAllLines(target.toPath(),java.nio.charset.StandardCharsets.UTF_8))
-                :new java.util.ArrayList<>();
-            lines.add(System.currentTimeMillis()+" "+event);
-            while(lines.size()>64) lines.remove(0);
-            File pending=new File(context.getFilesDir(),"auth-diagnostics.new");
-            Files.write(pending.toPath(),lines,java.nio.charset.StandardCharsets.UTF_8);
-            Files.move(pending.toPath(),target.toPath(),StandardCopyOption.REPLACE_EXISTING);
-        } catch(Exception ignored) { /* Diagnostics must never interrupt authorization. */ }
-    }
+    private synchronized void diagnostic(String event) { DiagnosticLog.add(event); }
     static String diagnosticReason(String reason) {
         for(String name:new String[]{"identity_mismatch","authorization_required","school_not_bound","qr_expired","cancelled","wechat_credential_rejected","oauth_credentials_missing","qr_network_failed","qr_unavailable","qr_status_unrecognized","qr_tls_certificate","qr_tls_failed","qr_network_timeout","qr_remote_disconnected","qr_incomplete_read","qr_bad_status_line","qr_connection_failed","qr_dns_failed","qr_response_encoding"})
             if(reason.contains(name)) return name;
@@ -56,7 +41,17 @@ public class WeChatAuth {
             if(java.util.regex.Pattern.compile("\\b"+type[0]+"\\b").matcher(reason).find()) return type[1];
         return "other";
     }
-    private File file() { return new File(context.getFilesDir(),"wechat.enc"); }
+    private int accountIndex=-1;
+    void useAccount(int index){accountIndex=index;consume();username=null;sessionBinding=null;}
+    private File file() { return new File(context.getFilesDir(),accountIndex<0?"wechat.enc":"wechat-account-"+accountIndex+".enc"); }
+    synchronized JSONObject libraryAccount(String session,JSONObject point)throws Exception {
+        if(username==null||sessionBinding==null||!sessionBinding.equals(binding(session)))throw new IOException("请先完成当前账号身份核对");
+        JSONObject credentials=new JSONObject(load());
+        return new JSONObject().put("student_id",username).put("name","账号 "+username).put("session",session).put("point",new JSONObject(point.toString())).put("credentials",credentials);
+    }
+    synchronized String readEncrypted(String name)throws Exception {return decrypt(new File(context.getFilesDir(),name));}
+    synchronized void writeEncrypted(String name,String value)throws Exception {encrypt(new File(context.getFilesDir(),name),value);}
+
     private synchronized javax.crypto.SecretKey key() throws Exception {
         KeyStore store=KeyStore.getInstance("AndroidKeyStore");store.load(null);
         if(!store.containsAlias(ALIAS)) {
@@ -68,8 +63,11 @@ public class WeChatAuth {
         return (javax.crypto.SecretKey)store.getKey(ALIAS,null);
     }
     private synchronized String load() throws Exception {
-        if(!file().exists()) return "";
-        byte[] bytes=Files.readAllBytes(file().toPath());
+        return decrypt(file());
+    }
+    private String decrypt(File source)throws Exception {
+        if(!source.exists()) return "";
+        byte[] bytes=Files.readAllBytes(source.toPath());
         if(bytes.length<29) throw new IOException("微信授权存储损坏，请清除微信授权后重试");
         Cipher c=Cipher.getInstance("AES/GCM/NoPadding");
         c.init(Cipher.DECRYPT_MODE,key(),new GCMParameterSpec(128,bytes,0,12));
@@ -78,13 +76,16 @@ public class WeChatAuth {
     }
     private synchronized void save(String value) throws Exception {
         if(cancelled.get()) throw new IOException("授权已取消");
+        encrypt(file(),value);
+    }
+    private void encrypt(File target,String value)throws Exception {
         Cipher c=Cipher.getInstance("AES/GCM/NoPadding");c.init(Cipher.ENCRYPT_MODE,key());
         c.updateAAD(ALIAS.getBytes(java.nio.charset.StandardCharsets.UTF_8));
-        File temp=new File(context.getFilesDir(),"wechat.new");
+        File temp=new File(context.getFilesDir(),target.getName()+".new");
         try(FileOutputStream out=new FileOutputStream(temp)) {
             out.write(c.getIV());out.write(c.doFinal(value.getBytes(java.nio.charset.StandardCharsets.UTF_8)));out.getFD().sync();
         }
-        Files.move(temp.toPath(),file().toPath(),StandardCopyOption.REPLACE_EXISTING);
+        Files.move(temp.toPath(),target.toPath(),StandardCopyOption.REPLACE_EXISTING);
     }
     static String binding(String session) throws Exception {
         return Base64.encodeToString(MessageDigest.getInstance("SHA-256").digest(session.getBytes(java.nio.charset.StandardCharsets.UTF_8)),Base64.NO_WRAP);
@@ -139,7 +140,7 @@ public class WeChatAuth {
             java.util.regex.Matcher qrHttp=java.util.regex.Pattern.compile("\\bqr_http_([1-5]\\d{2})\\b").matcher(reason);
             if(qrHttp.find()) throw failure("微信二维码状态接口返回 HTTP "+qrHttp.group(1)+"，已停止等待；没有提交签到");
             if(safeReason.contains("tls_certificate")) throw failure("微信连接的 TLS 证书验证失败，已停止授权；没有忽略证书验证或提交签到");
-            if(safeReason.startsWith("qr_")||safeReason.startsWith("python_")) throw failure("微信二维码状态连接未完成（"+safeReason+"），已停止等待；没有提交签到");
+            if(safeReason.startsWith("qr_")||safeReason.startsWith("python_")) throw failure("授权连接未完成（阶段："+diagnosticPhase+"；"+safeReason+"），请复制日志；没有提交签到");
             throw failure("微信授权未完成，请检查网络或重新扫码；没有提交签到");
         } finally {
             context.getSharedPreferences("auth-runtime",0).edit().putBoolean("in_progress",false).commit();
@@ -171,6 +172,7 @@ public class WeChatAuth {
             owner.listener.event("progress",message);
         }
         public void diagnostic(String reason) {
+            if(reason.matches("net_[a-z0-9_= -]{1,280}")) DiagnosticLog.add(reason);
             if(reason.matches("qr_poll_(?:pending|scanned|authorized)")) owner.diagnostic("phase="+reason);
             else if(reason.matches("qr_(?:network_timeout|remote_disconnected|incomplete_read|bad_status_line|connection_failed|dns_failed|http_5\\d{2})")) owner.diagnostic("qr_retry reason="+reason);
         }

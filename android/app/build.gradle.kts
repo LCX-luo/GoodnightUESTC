@@ -6,8 +6,8 @@ android {
         applicationId = "cn.lcx.goodnightuestc"
         minSdk = 26
         targetSdk = 36
-        versionCode = 7
-        versionName = "0.2.4"
+        versionCode = 10
+        versionName = "0.2.7"
         ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
         testInstrumentationRunner = "cn.lcx.goodnightuestc.SmokeInstrumentation"
     }

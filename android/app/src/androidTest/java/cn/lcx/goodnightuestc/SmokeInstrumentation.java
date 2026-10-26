@@ -57,6 +57,12 @@ public class SmokeInstrumentation extends Instrumentation {
     @Override public void onStart() {
         Bundle result=new Bundle(); MainActivity activity=null; FakeSchool fake=null;
         try {
+            DiagnosticLog.init(getTargetContext()); DiagnosticLog.begin("operation");
+            for(int i=0;i<700;i++) DiagnosticLog.add("bounded_log index="+i+" padding="+"a".repeat(140));
+            check(DiagnosticLog.copy().getBytes(java.nio.charset.StandardCharsets.UTF_8).length<65536,"logs bounded below 64KiB");
+            DiagnosticLog.add("https://sensitive.example/?token=do-not-export");
+            check(!DiagnosticLog.copy().contains("do-not-export"),"raw URL rejected");
+            DiagnosticLog.finish(true);check(!DiagnosticLog.copy().contains("bounded_log"),"normal round drops its verbose detail");
             double[] c=Coordinates.gcj(30.6752,104.0975);
             // Values compared with the desktop coordtransform reference as part of local validation.
             check(c[0]>30.672 && c[0]<30.674 && c[1]>104.099 && c[1]<104.101,"Shahe GCJ02");
@@ -103,6 +109,11 @@ public class SmokeInstrumentation extends Instrumentation {
             final MainActivity a=activity;
             set(a,"wechat",new WeChatAuth(getTargetContext(),(kind,value)->{}) {
                 @Override String forSubmission(String session) { return "t".repeat(43); }
+                @Override synchronized JSONObject libraryAccount(String session,JSONObject point)throws Exception {
+                    return new JSONObject().put("student_id","synthetic-user").put("name","synthetic")
+                        .put("session",session).put("point",point).put("credentials",new JSONObject()
+                        .put("openid","synthetic-openid").put("access_token","synthetic-access").put("refresh_token","synthetic-refresh"));
+                }
             });
             check(WeChatAuth.selfTest(getTargetContext()),"phone-local Python crypto and protocol import");
             SharedPreferences prefs=getTargetContext().getSharedPreferences("instrumentation-only",0); prefs.edit().clear().commit();
@@ -117,16 +128,33 @@ public class SmokeInstrumentation extends Instrumentation {
             Method precheck=MainActivity.class.getDeclaredMethod("precheck",double[].class); precheck.setAccessible(true);
             String address=(String)precheck.invoke(a,(Object)c);
             check(address.contains("模拟"),"readonly address"); check(f.posts==0,"readonly never POST"); check(f.reads==4,"four readonly endpoints");
+            check("true".equals(js(a,"!!document.getElementById('copy-logs') && !!document.getElementById('accounts')")),"diagnostic and account controls exist");
+            DiagnosticLog.add("before_success_marker");
             Method submit=MainActivity.class.getDeclaredMethod("submit",double[].class,String.class,String.class,long.class); submit.setAccessible(true);
-            submit.invoke(a,c,address,SchoolClient.day(),SystemClock.elapsedRealtime());
+            DiagnosticLog.begin("submit");submit.invoke(a,c,address,SchoolClient.day(),SystemClock.elapsedRealtime());DiagnosticLog.finish(true);
+            check(!DiagnosticLog.copy().contains("before_success_marker"),"verified attendance clears preceding logs");
+            check("true".equals(js(a,"!document.getElementById('save-account-panel').hidden")),"offer account library only after confirmed attendance");
+            WeChatAuth libraryAuth=new WeChatAuth(getTargetContext(),(kind,value)->{});
+            libraryAuth.writeEncrypted("instrumentation-library.enc","[]");
+            PhoneAccounts library=new PhoneAccounts(getTargetContext(),libraryAuth,"instrumentation-library.enc","instrumentation-account-");
+            JSONObject candidate=new JSONObject(retained.pendingAccount.toString());
+            check(library.save(candidate)==0,"new account gets first index");
+            candidate.put("session","updated-synthetic-session");
+            check(library.save(candidate)==0&&library.all().length()==1,"same identity updates without duplicate");
+            check("updated-synthetic-session".equals(library.select(0).getString("session")),"library selects updated school session");
+            check(!library.all().getJSONObject(0).has("credentials"),"library metadata excludes credentials");
+            byte[] encrypted=java.nio.file.Files.readAllBytes(new java.io.File(getTargetContext().getFilesDir(),"instrumentation-library.enc").toPath());
+            check(!new String(encrypted,java.nio.charset.StandardCharsets.ISO_8859_1).contains("updated-synthetic-session"),"library session encrypted at rest");
             check(f.posts==1,"one explicit POST"); check(!prefs.contains("attempt:"+SchoolClient.day()),"manual confirmation has no daily suppression");
             check(Math.abs(f.payload.getDouble("latitude")-c[0])<1e-12,"no double conversion");
             check("gcj02".equals(f.payload.getString("coordinateSystemCode")),"coordinate system");
             check(!f.payload.getBoolean("locationEnabled"),"no fabricated sensor claim");
-            submit.invoke(a,c,address,SchoolClient.day(),SystemClock.elapsedRealtime());
+            DiagnosticLog.begin("submit");submit.invoke(a,c,address,SchoolClient.day(),SystemClock.elapsedRealtime());DiagnosticLog.finish(true);
             check(f.posts==2,"new explicit confirmation sends one new POST despite existing record");
             prefs.edit().clear().commit(); f.uncertain=true; f.posts=0;
-            submit.invoke(a,c,address,SchoolClient.day(),SystemClock.elapsedRealtime());
+            DiagnosticLog.begin("submit");submit.invoke(a,c,address,SchoolClient.day(),SystemClock.elapsedRealtime());DiagnosticLog.finish(true);
+            check(DiagnosticLog.copy().contains("submission_finished verified=false"),"unknown result preserves diagnostics");
+            check(retained.pendingAccount==null,"unknown result offers no account save");
             check(f.posts==1,"timeout never retries POST"); check(!prefs.contains("attempt:"+SchoolClient.day()),"no automatic retry queued");
             prefs.edit().clear().commit();
             result.putString("stream","PASS: "+assertions+" assertions; all school APIs mocked; no real attendance submitted.\n");

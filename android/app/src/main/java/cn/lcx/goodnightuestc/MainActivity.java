@@ -18,6 +18,7 @@ public class MainActivity extends Activity implements AuthSession.Screen {
     private WebView web;
     private boolean pageReady;
     private SchoolClient school;
+    private PhoneAccounts accounts;
     private WeChatAuth wechat;
     private ExecutorService worker;
     private AuthSession runtime;
@@ -26,6 +27,7 @@ public class MainActivity extends Activity implements AuthSession.Screen {
     private final Handler main=new Handler(Looper.getMainLooper());
     @Override public void onCreate(Bundle saved) {
         super.onCreate(saved);
+        DiagnosticLog.init(this); DiagnosticLog.add("activity_create recreated="+(saved!=null));
         state=getSharedPreferences("local",MODE_PRIVATE);
         web=new WebView(this);
         FrameLayout root=new FrameLayout(this);
@@ -36,7 +38,10 @@ public class MainActivity extends Activity implements AuthSession.Screen {
         settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
         runtime=AuthSession.get(this,settings.getUserAgentString());
         school=runtime.school; wechat=runtime.wechat; worker=runtime.worker; busy=runtime.busy;
-        android.util.Log.i("GoodnightAuth","activity_created recreated="+(saved!=null));
+        accounts=new PhoneAccounts(this,wechat);
+        try{if(!busy.get()){accounts.importPrivate();int index=state.getInt("account_index",-1);if(index>=0){JSONObject row=accounts.select(index);school.setSession(row.getString("session"));}}}
+        catch(Exception e){DiagnosticLog.add("account_load_failed type="+DiagnosticLog.reason(e));}
+
         web.addJavascriptInterface(new Bridge(),"Android");
         web.setWebViewClient(new WebViewClient() {
             @Override public boolean shouldOverrideUrlLoading(WebView view,WebResourceRequest r) {
@@ -94,29 +99,43 @@ public class MainActivity extends Activity implements AuthSession.Screen {
     private void progress(String message) { emit("progress",message); }
     private void error(Exception ex) {
         String message=ex instanceof IOException && ex.getMessage()!=null && ex.getMessage().matches(".*[\\p{IsHan}].*")?ex.getMessage():"操作未完成，请检查网络并重新登录；可通过官方入口核对";
+        DiagnosticLog.add("operation_error type="+DiagnosticLog.reason(ex));
         emit("result",message);
     }
     private interface Job { void run() throws Exception; }
-    private void run(Job job) {
+    private void run(Job job) {run("operation",job);}
+    private void run(String operation,Job job) {
         if(!busy.compareAndSet(false,true)) return;
         emit("busy","true");
-        worker.execute(()->{ try { job.run(); } catch(Exception ex) { error(ex); } finally { busy.set(false); emit("busy","false"); } });
+        worker.execute(()->{DiagnosticLog.begin(operation);boolean completed=false;try { job.run();completed=true; } catch(Exception ex) { error(ex); } finally {DiagnosticLog.finish(completed);busy.set(false); emit("busy","false"); } });
     }
     final class Bridge {
+        @JavascriptInterface public void copyLogs(){main.post(()->{android.content.ClipboardManager clipboard=(android.content.ClipboardManager)getSystemService(CLIPBOARD_SERVICE);clipboard.setPrimaryClip(ClipData.newPlainText("诊断日志",DiagnosticLog.copy()));Toast.makeText(MainActivity.this,"已复制脱敏日志",Toast.LENGTH_SHORT).show();});}
+        @JavascriptInterface public void accounts(){if(busy.get())return;main.post(()->{try{JSONArray rows=accounts.all();String[] labels=new String[rows.length()];for(int i=0;i<rows.length();i++)labels[i]=rows.getJSONObject(i).getString("name");if(labels.length==0){Toast.makeText(MainActivity.this,"账号库为空，请先登录并完成一次签到",Toast.LENGTH_SHORT).show();return;}new AlertDialog.Builder(MainActivity.this).setTitle("选择本机账号").setItems(labels,(d,n)->{try{runtime.pendingAccount=null;emit("saveaccount","false");JSONObject row=accounts.select(n);school.setSession(row.getString("session"));emit("location",row.getJSONObject("point"));emit("wxstatus","已切换账号，尚未验证授权");emit("result","当前账号："+row.getString("name"));DiagnosticLog.add("account_selected index="+n);}catch(Exception e){error(e);}}).show();}catch(Exception e){error(e);}});}
+
+        @JavascriptInterface public void saveAccount(){
+            run(()->{
+                JSONObject candidate=runtime.pendingAccount;
+                if(candidate==null)throw new IOException("请先完成一次签到，再保存账号");
+                int index=accounts.save(candidate);JSONObject row=accounts.select(index);school.setSession(row.getString("session"));
+                runtime.pendingAccount=null;emit("saveaccount","false");emit("result","账号已加入或更新至本机加密账号库，下次可直接选择。授权过期时仍需重新登录。");
+            });
+        }
         @JavascriptInterface public void wechatAuthorize() {
-            run(()->{ wechat.acquire(school.session(),true);emit("result","微信身份核对与取票成功，没有提交签到。可继续选择实际位置。 "); });
+            run("authorize",()->{ wechat.acquire(school.session(),true);emit("result","微信身份核对与取票成功，没有提交签到。可继续选择实际位置。 "); });
         }
         @JavascriptInterface public void wechatCancel() { wechat.cancel();emit("qrhide","");emit("wxstatus","已取消扫码授权，正在结束原等待任务；没有提交签到。"); }
         @JavascriptInterface public void wechatForget() {
             if(busy.get()) return;
-            run(()->{ wechat.forget();emit("wxstatus","本机微信授权已清除，下次需要重新扫码。"); });
+            run(()->{ runtime.pendingAccount=null;emit("saveaccount","false");wechat.forget();emit("wxstatus","本机微信授权已清除，下次需要重新扫码。"); });
         }
         @JavascriptInterface public void login() {
             if(busy.get()) return;
+            runtime.pendingAccount=null;emit("saveaccount","false");school.setSession(null);wechat.useAccount(-1);state.edit().remove("account_index").apply();
             main.post(()->startActivityForResult(new Intent(MainActivity.this,LoginActivity.class),1));
         }
         @JavascriptInterface public void check() {
-            run(()->{ progress("正在读取学校当天记录…"); JSONObject r=school.today(); emit("result","会话有效 · "+r.optString("businessDate")+" · "+r.optString("recordStatusCode")+"\n本次仅查询，没有提交签到。"); });
+            run("query",()->{ progress("正在读取学校当天记录…"); JSONObject r=school.today(); emit("result","会话有效 · "+r.optString("businessDate")+" · "+r.optString("recordStatusCode")+"\n本次仅查询，没有提交签到。"); });
         }
         @JavascriptInterface public void prepare(double lat,double lng,boolean confirm) {
             run(()->{
@@ -134,7 +153,7 @@ public class MainActivity extends Activity implements AuthSession.Screen {
         @JavascriptInterface public void logout() {
             if(busy.get()) return;
             main.post(()->new AlertDialog.Builder(MainActivity.this).setMessage("清除本应用保存的学校会话？提交防重复记录会保留。").setNegativeButton("取消",null)
-                .setPositiveButton("清除",(d,w)->{ try { wechat.forget(); } catch(Exception ignored) { } CookieManager.getInstance().removeAllCookies(ok->{ CookieManager.getInstance().flush(); WebStorage.getInstance().deleteAllData(); web.clearCache(true); emit("result","学校会话和本地微信授权已清除"); }); }).show());
+                .setPositiveButton("清除",(d,w)->{ runtime.pendingAccount=null;emit("saveaccount","false");school.setSession(null);state.edit().remove("account_index").apply();try { wechat.forget(); } catch(Exception ignored) { } CookieManager.getInstance().removeAllCookies(ok->{ CookieManager.getInstance().flush(); WebStorage.getInstance().deleteAllData(); web.clearCache(true); emit("result","学校会话和本地微信授权已清除"); }); }).show());
         }
     }
     private String precheck(double[] point) throws Exception {
@@ -166,12 +185,13 @@ public class MainActivity extends Activity implements AuthSession.Screen {
             button.setOnClickListener(v->{
                 if(busy.get()) return;
                 dialog.dismiss();
-                run(()->submit(point,address,day,prepared));
+                run("submit",()->submit(point,address,day,prepared));
             });
         }); dialog.show();
     }
     private void submit(double[] point,String address,String day,long prepared) throws Exception {
         if(!day.equals(SchoolClient.day())||SystemClock.elapsedRealtime()-prepared>120000) throw new IOException("确认已过期，请重新预检查");
+        runtime.pendingAccount=null;emit("saveaccount","false");
         progress("正在核对并获取本次微信操作授权…");
         String beforeSession=school.session();
         String operationTicket=wechat.forSubmission(beforeSession);
@@ -183,12 +203,19 @@ public class MainActivity extends Activity implements AuthSession.Screen {
             .put("clientTime",SchoolClient.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")))
             .put("userAgent",WebSettings.getDefaultUserAgent(this));
         progress("正在提交一次签到请求…");
-        String rejection="";
-        try { school.setOperationTicket(operationTicket);school.post(payload); }
-        catch(Exception ex) { rejection=ex instanceof IOException?ex.getMessage():""; }
+        String rejection=""; boolean accepted=false;
+        try { school.setOperationTicket(operationTicket);school.post(payload);accepted=true; }
+        catch(Exception ex) { DiagnosticLog.add("submit_exception type="+DiagnosticLog.reason(ex));rejection=ex instanceof IOException&&ex.getMessage()!=null?ex.getMessage():"请求结果未知，请查询学校记录"; }
         finally { wechat.consume(); }
-        String recordStatus="查询失败";
-        try { recordStatus=school.today().optString("recordStatusCode"); } catch(Exception ignored) { }
+        String recordStatus="查询失败"; boolean verified=false;
+        try { JSONObject record=school.today();recordStatus=record.optString("recordStatusCode");verified=accepted&&SchoolClient.confirmed(record); } catch(Exception ignored) { }
+        if(verified) {
+            DiagnosticLog.success();
+            try {
+                JSONObject location=new JSONObject().put("lat",point[0]).put("lng",point[1]).put("system","gcj02");
+                runtime.pendingAccount=wechat.libraryAccount(beforeSession,location);emit("saveaccount","true");
+            }catch(Exception e){DiagnosticLog.outcome("library_offer_failed");DiagnosticLog.add("library_offer_failed type="+DiagnosticLog.reason(e));}
+        } else {DiagnosticLog.add("submission_finished verified=false");if(Integer.valueOf(4006).equals(school.lastSubmissionCode())&&"PENDING".equals(recordStatus))DiagnosticLog.outcome("window_4006");}
         emit("result","本次发送一次签到请求。\n"+(rejection.isEmpty()?"学校接受请求（代码 0）":rejection)+"\n当天记录："+recordStatus+"。已有记录不代表本次票据有效；不自动重发。");
     }
 
@@ -197,10 +224,11 @@ public class MainActivity extends Activity implements AuthSession.Screen {
         if(request==1 && result==RESULT_OK) new Bridge().check();
     }
     @Override protected void onStart() {
-        super.onStart(); android.util.Log.i("GoodnightAuth","activity_started");
+        super.onStart(); DiagnosticLog.add("activity_start"); android.util.Log.i("GoodnightAuth","activity_started");
         if(pageReady && runtime!=null) runtime.attach(this);
     }
     @Override protected void onStop() {
+        DiagnosticLog.add("activity_stop busy="+(busy!=null&&busy.get()));
         android.util.Log.i("GoodnightAuth","activity_stopped busy="+(busy!=null&&busy.get())); super.onStop();
     }
     @Override public void onDestroy() {

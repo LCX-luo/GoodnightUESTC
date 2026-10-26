@@ -15,6 +15,7 @@ final class AuthSession {
     private static AuthSession instance;
     final ExecutorService worker = Executors.newSingleThreadExecutor();
     final AtomicBoolean busy = new AtomicBoolean(false);
+    volatile org.json.JSONObject pendingAccount;
     final WeChatAuth wechat;
     final SchoolClient school;
     private WeakReference<Screen> screen = new WeakReference<>(null);
@@ -24,13 +25,14 @@ final class AuthSession {
         return instance;
     }
     private AuthSession(Context context, String userAgent) {
+        DiagnosticLog.init(context);
         school = new SchoolClient(userAgent);
         wechat = new WeChatAuth(context, this::event);
         snapshot.put("busy", "false");
         if (context.getSharedPreferences("auth-runtime",0).getBoolean("in_progress",false)) {
             snapshot.put("result","上次授权时应用进程被系统结束，原等待任务已中断。请重新显示二维码并确认；没有自动提交签到。");
             context.getSharedPreferences("auth-runtime",0).edit().putBoolean("in_progress",false).apply();
-            Log.i("GoodnightAuth","previous_process_interrupted");
+            DiagnosticLog.add("previous_process_interrupted");
         }
     }
     synchronized void attach(Screen target) {
@@ -42,11 +44,11 @@ final class AuthSession {
         for (Map.Entry<String,Object> item : snapshot.entrySet())
             if (!item.getKey().equals("busy") && !item.getKey().equals("qr") && !item.getKey().equals("wxstatus"))
                 target.show(item.getKey(), item.getValue());
-        Log.i("GoodnightAuth", "screen_attached busy=" + busy.get());
+        DiagnosticLog.add( "screen_attached busy=" + busy.get());
     }
     synchronized void detach(Screen target) {
         if (screen.get() == target) screen.clear();
-        Log.i("GoodnightAuth", "screen_detached busy=" + busy.get());
+        DiagnosticLog.add( "screen_detached busy=" + busy.get());
     }
     private static boolean authProgress(String value) {
         switch (value) {
@@ -62,7 +64,7 @@ final class AuthSession {
     }
     synchronized void event(String kind, Object value) {
         if (kind.equals("qrhide") || kind.equals("busy") && "false".equals(value)) snapshot.remove("qr");
-        if (kind.equals("qr") || kind.equals("wxstatus") || kind.equals("busy")) snapshot.put(kind,value);
+        if (kind.equals("qr") || kind.equals("wxstatus") || kind.equals("busy") || kind.equals("saveaccount")) snapshot.put(kind,value);
         boolean updateAuthStatus = false;
         if (kind.equals("qr")) {
             snapshot.put("wxstatus","请用绑定账号的本人微信摄像头扫码，并在微信确认授权。");
@@ -80,6 +82,6 @@ final class AuthSession {
             if (updateAuthStatus) target.show("wxstatus",snapshot.get("wxstatus"));
         }
         // QR, identity, URLs, cookies and server payloads are deliberately never logged.
-        Log.i("GoodnightAuth", "event=" + kind + " busy=" + busy.get());
+        DiagnosticLog.add( "event=" + kind + " busy=" + busy.get());
     }
 }
